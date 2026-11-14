@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 
 DEFAULT_DEMO_START_DATE: str = "2026-11-14"
 DEFAULT_TICK_SECONDS: float = 2.0
+# The single MLflow experiment for every agent span; an absolute path so it is valid on Databricks too.
+MLFLOW_EXPERIMENT_NAME: str = "/Shared/pantry-agent"
 
 
 def _get_str(name: str, default: str = "") -> str:

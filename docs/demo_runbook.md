@@ -31,6 +31,11 @@ One-page checklist for running the three-round Pantry Agent demo. Run every comm
    python scripts/reset_demo.py    # add --backend json to override STORE_BACKEND
    ```
 4. **Verify invariants**: `reset_demo.py` must end with `PASS inventory invariants hold`. If it prints `FAIL invariant violations after reset`, or `warning: no pantry baseline found`, run step 2 and then step 3 again.
+5. **Verify auto-run is off**: reset puts the stored auto-run state back to its default (`mode='off'`, `days_completed=0`). Check it before going live:
+   ```bash
+   python -c "from pantry.config import get_settings; from pantry.store.factory import make_store; print(make_store(None, get_settings()).get_auto_run())"
+   ```
+   Expect `mode='off'`. If it shows `running` or `paused`, rerun step 3.
 
 ## 3. Start the system
 
@@ -43,7 +48,7 @@ One-page checklist for running the three-round Pantry Agent demo. Run every comm
 
 ## 4. Demo flow (from `seed_data/demo_script.json`)
 
-Settings: `auto_run: true` and `auto_accept_non_risk: true`. A trigger fires once when an item first enters the 2-day urgency window. Each new day is reached with an **ADVANCE_CLOCK** command.
+Script settings: `auto_run: true` and `auto_accept_non_risk: true`. These are separate from the stored auto-run state, which is off after reset. How it gets switched on for the demo is a TODO: confirm with B/C. A trigger fires once when an item first enters the 2-day urgency window. Each new day is reached with an **ADVANCE_CLOCK** command.
 
 | Day | Trigger | Operator action | Audience should see |
 | --- | --- | --- | --- |

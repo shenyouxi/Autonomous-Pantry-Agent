@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from pantry.agents.orchestrator import OneRunOrchestrator
-from pantry.models import Run, TriggerEvent
+from pantry.models import Command, Run, TriggerEvent
 from pantry.store.base import Store
 
 
@@ -54,6 +54,39 @@ class Worker:
                 finally:
                     raise
         return results
+
+    def _dispatch_command(self, command: Command) -> dict[str, str]:
+        """Execute one supported command and return its small result payload."""
+        if command.type == "FEEDBACK":
+            trace_id = str(command.payload["trace_id"])
+            outcome = command.payload["outcome"]
+            op_id = str(command.payload.get("op_id", command.command_id))
+            source = command.payload.get("source", "user")
+            feedback = self.store.save_feedback(trace_id, outcome, op_id, source)
+            return {"trace_id": feedback.trace_id}
+
+        raise NotImplementedError(
+            f"Command type {command.type!r} is not implemented yet"
+        )
+
+    def process_commands(self, limit: int = 20) -> list[Command]:
+        """Process pending commands once and persist each command status."""
+        processed: list[Command] = []
+
+        for command in self.store.poll_commands(limit):
+            try:
+                self._dispatch_command(command)
+                processed.append(self.store.mark_command(command.command_id, "done"))
+            except Exception as exc:
+                processed.append(
+                    self.store.mark_command(
+                        command.command_id,
+                        "failed",
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                )
+
+        return processed
 
     def execute_event(self, event: TriggerEvent) -> Run:
         """Execute one already-built trigger context."""

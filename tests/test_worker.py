@@ -5,7 +5,7 @@ import pytest
 from pantry.agents.orchestrator import OneRunOrchestrator
 from pantry.agents.worker import Worker
 from pantry.llm import FakeLLM
-from pantry.models import Ingredient
+from pantry.models import Command, Ingredient, Trace
 from pantry.store.json_store import JsonStore
 
 
@@ -81,3 +81,54 @@ def test_worker_marks_bus_event_failed_when_processing_raises():
     assert len(failed_events) == 1
     assert failed_events[0].dedupe_key == events[0].dedupe_key
     assert store.list_bus_events(status="pending") == []
+
+
+def test_worker_processes_feedback_command_and_returns_done():
+    store = JsonStore.memory()
+    trace = Trace(
+        trace_id="trace:feedback-test",
+        run_id="run:feedback-test",
+        day_index=0,
+        trigger="EXPIRY_IMMINENT",
+        snapshot_text="feedback test",
+        final_outcome="pending_confirmation",
+    )
+    store.save_trace(trace)
+
+    store.enqueue_command(
+        Command(
+            command_id="cmd-feedback",
+            type="FEEDBACK",
+            payload={
+                "trace_id": "trace:feedback-test",
+                "outcome": "accepted",
+                "op_id": "op-feedback",
+                "source": "user",
+            },
+        )
+    )
+
+    worker = Worker(store, OneRunOrchestrator(store, FakeLLM()))
+    processed = worker.process_commands()
+
+    assert len(processed) == 1
+    assert processed[0].command_id == "cmd-feedback"
+    assert processed[0].status == "done"
+    assert store.get_trace("trace:feedback-test").final_outcome == "accepted"
+    assert store.poll_commands() == []
+
+
+def test_worker_marks_unsupported_command_failed():
+    store = JsonStore.memory()
+    store.enqueue_command(
+        Command(command_id="cmd-approve", type="APPROVE", payload={})
+    )
+
+    worker = Worker(store, OneRunOrchestrator(store, FakeLLM()))
+    processed = worker.process_commands()
+
+    assert len(processed) == 1
+    assert processed[0].command_id == "cmd-approve"
+    assert processed[0].status == "failed"
+    assert "not implemented" in (processed[0].error or "")
+    assert store.poll_commands() == []

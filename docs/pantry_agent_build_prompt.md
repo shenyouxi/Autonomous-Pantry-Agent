@@ -84,7 +84,7 @@ Inventory invariants (asserted after every write; a violation rolls back): quant
 - expiry_u = clamp((5 - days) / 5, 0, 1); low_stock_u = 1 if quantity <= safety_stock else 0 (use physical quantity, not available quantity, so the agent's own reservations do not retrigger it)
 - priority_score = 0.7 * expiry_u + 0.3 * low_stock_u, recomputed on every inventory change and every clock advance
 - EXPIRY_IMMINENT: 0 <= days <= 2
-- STOCK_DEPLETED: quantity <= safety_stock
+- STOCK_DEPLETED: 0 < quantity <= safety_stock (physical quantity; quantity == 0 does not trigger, because zero-stock seed items are intentional missing ingredients for the Resolver)
 - days < 0 (already expired): no trigger, excluded from planning, shown in red in the UI as "needs manual handling"
 - severity: days == 0 or quantity == 0 is high, otherwise low
 - dedupe_key = trigger_type:item_name:today

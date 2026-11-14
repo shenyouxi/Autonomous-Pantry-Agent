@@ -63,7 +63,30 @@ def test_expiry_imminent_window(days, fires):
 
 def test_stock_depleted_fires_at_or_below_safety_stock():
     assert rules.trigger_types(make_item("eggs", 2, 14, safety=2, unit="pcs"), TODAY) == ["STOCK_DEPLETED"]
+    assert rules.trigger_types(make_item("eggs", 1, 14, safety=2, unit="pcs"), TODAY) == ["STOCK_DEPLETED"]
     assert rules.trigger_types(make_item("eggs", 3, 14, safety=2, unit="pcs"), TODAY) == []
+
+
+@pytest.mark.parametrize("days", [14, None])
+def test_stock_depleted_does_not_fire_for_zero_stock(days):
+    item = make_item("heavy cream", 0, days, safety=100, unit="ml")
+    assert rules.trigger_types(item, TODAY) == []
+    assert rules.detect_triggers([item], TODAY) == []
+
+
+def test_zero_stock_item_still_fires_expiry_imminent_only():
+    item = make_item("milk", 0, 1, safety=200, unit="ml")
+    assert rules.trigger_types(item, TODAY) == ["EXPIRY_IMMINENT"]
+
+
+def test_stock_depleted_dedupe_key_is_stable_per_day():
+    item = make_item(" Eggs ", 1, 14, safety=2, unit="pcs")
+    first = rules.detect_triggers([item], TODAY)
+    again = rules.detect_triggers([item], TODAY)
+    assert [e.dedupe_key for e in first] == ["STOCK_DEPLETED:eggs:2026-11-14"]
+    assert [e.dedupe_key for e in again] == [e.dedupe_key for e in first]
+    next_day = rules.detect_triggers([item], TODAY + timedelta(days=1))
+    assert [e.dedupe_key for e in next_day] == ["STOCK_DEPLETED:eggs:2026-11-15"]
 
 
 @pytest.mark.parametrize("label", ["use_by", "best_before", "estimated_quality", "none"])
@@ -78,9 +101,10 @@ def test_expired_items_never_trigger_and_are_not_plannable(label):
 def test_detect_triggers_builds_bus_events_with_severity_and_dedupe_key():
     items = [
         make_item("milk", 1000, 0, safety=200, unit="ml"),
-        make_item("eggs", 0, 14, safety=2, unit="pcs"),
+        make_item("eggs", 1, 14, safety=2, unit="pcs"),
         make_item("butter", 250, 1, safety=50),
         make_item("flour", 1000, 180, safety=200),
+        make_item("heavy cream", 0, 30, safety=100, unit="ml"),
     ]
     events = {(e.trigger_type, e.item_name): e for e in rules.detect_triggers(items, TODAY)}
     assert set(events) == {
@@ -89,7 +113,7 @@ def test_detect_triggers_builds_bus_events_with_severity_and_dedupe_key():
         ("EXPIRY_IMMINENT", "butter"),
     }
     assert events[("EXPIRY_IMMINENT", "milk")].severity == "high"
-    assert events[("STOCK_DEPLETED", "eggs")].severity == "high"
+    assert events[("STOCK_DEPLETED", "eggs")].severity == "low"
     assert events[("EXPIRY_IMMINENT", "butter")].severity == "low"
     assert events[("EXPIRY_IMMINENT", "milk")].dedupe_key == "EXPIRY_IMMINENT:milk:2026-11-14"
     assert all(e.status == "pending" for e in events.values())

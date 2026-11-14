@@ -275,14 +275,18 @@ def dedupe_key(trigger_type: TriggerType, item_name: str, today: date | str) -> 
 
 
 def trigger_types(item: Ingredient, today: date | str) -> list[TriggerType]:
-    """Return the triggers this item fires today; expired items (days < 0) never fire."""
+    """Return the triggers this item fires today; expired items (days < 0) never fire.
+
+    STOCK_DEPLETED fires only when 0 < quantity <= safety_stock: zero-stock items are intentional
+    missing ingredients for the Resolver and do not trigger.
+    """
     days = days_left(item.expiry_date, today)
     if days is not None and days < 0:
         return []
     fired: list[TriggerType] = []
     if days is not None and 0 <= days <= EXPIRY_TRIGGER_MAX_DAYS:
         fired.append(EXPIRY_IMMINENT)
-    if item.quantity <= item.safety_stock:
+    if 0 < item.quantity <= item.safety_stock:
         fired.append(STOCK_DEPLETED)
     return fired
 

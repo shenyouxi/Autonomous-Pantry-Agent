@@ -1,0 +1,73 @@
+# Demo Runbook
+
+One-page checklist for running the three-round Pantry Agent demo. Run every command from the repo root.
+
+## 1. Prerequisites
+
+- Python virtual environment with dependencies installed:
+  ```bash
+  python -m venv .venv && source .venv/bin/activate
+  pip install -r requirements.txt
+  ```
+- Copy `.env.example` to `.env` and fill it in. **Never paste secret values into chat, docs or commits.**
+  - MongoDB: `MONGODB_URI`, `MONGODB_DB`, `STORE_BACKEND=mongo` (use `json` to run offline)
+  - LLM: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `EMBED_PROVIDER=openai`, `EMBED_MODEL`
+  - Search: `LINKUP_API_KEY`, `TAVILY_API_KEY`
+  - Tracing (optional): `MLFLOW_TRACKING_URI`, `DATABRICKS_HOST`, `DATABRICKS_TOKEN`
+  - Demo: `DEMO_START_DATE=2026-11-14`, `TICK_SECONDS`, `CACHE_FIRST`
+
+## 2. Before the demo (in order)
+
+1. **Preflight**: checks env var names, Mongo ping, embedding dimension (1536), chat JSON mode and search keys. It prints PASS/FAIL with a fallback for each check and exits non-zero if any check fails.
+   ```bash
+   python scripts/preflight.py
+   ```
+2. **Seed** (first time only, or after changing `seed_data/`): writes the pantry, profile and seed traces, then waits up to 120 s for the Atlas vector index.
+   ```bash
+   python scripts/seed.py          # same as: python -m pantry.seed
+   ```
+3. **Reset to day 1**: safe to rerun. It keeps `search_cache`, `plan_cache` and seed traces, and clears runs, bus events, commands, ledger, feedback and the shopping list.
+   ```bash
+   python scripts/reset_demo.py    # add --backend json to override STORE_BACKEND
+   ```
+4. **Verify invariants**: `reset_demo.py` must end with `PASS inventory invariants hold`. If it prints `FAIL invariant violations after reset`, or `warning: no pantry baseline found`, run step 2 and then step 3 again.
+
+## 3. Start the system
+
+- **Worker** (consumes commands and runs the agent): TODO: confirm with B/C. The repo has no worker entry point yet.
+- **UI**:
+  ```bash
+  streamlit run pantry/ui/app.py
+  ```
+  Right now this is a scripted preview that reads `seed_data/demo_script.json` ("Live agent events are not connected yet"). The live command buttons are a TODO: confirm with C.
+
+## 4. Demo flow (from `seed_data/demo_script.json`)
+
+Settings: `auto_run: true` and `auto_accept_non_risk: true`. A trigger fires once when an item first enters the 2-day urgency window. Each new day is reached with an **ADVANCE_CLOCK** command.
+
+| Day | Trigger | Operator action | Audience should see |
+| --- | --- | --- | --- |
+| Day 1 (2026-11-14, day_index 0) | `EXPIRY_IMMINENT`: milk, 1 day to use-by | None (0 clicks) | Planner proposes creamy garlic pasta for 2 (r5). Resolver finds 100 ml of double cream missing, and Linkup returns a cited substitute (75 ml milk + 25 g butter). The rule gate passes and the plan is **auto-accepted**. MEAL_COMPLETED applies the inventory changes (for example, milk 700 → 625 ml). An auto-accept feedback is written. |
+| Day 2 (2026-11-15, day_index 1) | ADVANCE_CLOCK, then `EXPIRY_IMMINENT`: eggs, 2 days | ADVANCE_CLOCK only | Planner proposes creamy carbonara for 4 (r6). **Memory retrieval shows the Round 1 trace in the UI.** The cream substitution is reused at a smaller scale (56.25 ml milk + 18.75 g butter). The plan is auto-accepted and eggs go 6 → 3. |
+| Day 3 (2026-11-16, day_index 2) | ADVANCE_CLOCK, then `EXPIRY_IMMINENT`: baby spinach, 2 days | ADVANCE_CLOCK, then **REJECT** (1 click) | Resolver surfaces walnut pesto (r4). The allergen gate flags guest u3 (peanuts, tree nuts), the run pauses at `pending_confirmation`, and a risk card shows the source and the affected guest. There is no generic Accept button. After REJECT, the state is `rejected`, the inventory deduction is 0, and the rejected feedback is searchable. |
+
+Commands: `ADVANCE_CLOCK`, `APPROVE`, `REJECT` and `FEEDBACK` are defined in `pantry/models.py` (`CommandType`). The UI shows a feedback result only after its command status is `done`. How each command is sent (button or CLI) is a TODO: confirm with C.
+
+## 5. If something goes wrong
+
+- **Reset at any point**: `python scripts/reset_demo.py`, then restart from Day 1.
+- **Atlas vector index status** (index `trace_vector_index` on `decision_traces`):
+  ```bash
+  python -c "from dotenv import load_dotenv; load_dotenv('.env'); from pantry.store.mongo_store import MongoStore; s=MongoStore(); print(s.vector_index_status()); s.close()"
+  ```
+  Look for `queryable: True`. While the index is not queryable, `search_traces` uses the local fallback. Rerunning `python scripts/seed.py` recreates the index and waits for it again.
+- **MLflow / Databricks down**: tracing is fail-safe. It logs one warning, disables MLflow for the process, and keeps writing to the Store. **The demo continues.**
+- **Linkup / Tavily down**: set `CACHE_FIRST=true` to use the search and plan caches, which `reset_demo` keeps. Preflight lists FakeLinkupClient / FakeTavilyClient as the offline fallback.
+- **Mongo unreachable**: set `STORE_BACKEND=json`, then reseed and reset with `--backend json`.
+- **LLM down**: FakeLLM or cached plans with `CACHE_FIRST=true`. Seeding offline: `python scripts/seed.py --fake-llm` (similarity results will not be meaningful).
+
+## 6. After the hackathon
+
+- In Atlas Network Access, remove the `0.0.0.0/0` IP allowlist entry.
+- Delete the Databricks personal access token (`DATABRICKS_TOKEN`).
+- Rotate the LLM, Linkup, Tavily and MongoDB credentials, and clear them from your local `.env`.

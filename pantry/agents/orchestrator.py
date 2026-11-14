@@ -113,6 +113,11 @@ class OneRunOrchestrator:
             step.set(gaps=len(gaps))
             step.checkpoint("GAP_CHECKED", {"gaps": [gap.model_dump() for gap in gaps]})
 
+        risk_status = "allergen" if any(
+            matches_allergen(clean_name(ingredient.name), allergens)
+            for ingredient in plan.ingredients
+        ) else "none"
+
         trace = Trace(
             trace_id=trace_id_for_run(run_id),
             run_id=run_id,
@@ -123,7 +128,7 @@ class OneRunOrchestrator:
             constraints=[str(event.constraints.model_dump())],
             plan=plan,
             retrieved_traces=retrieved,
-            risk_status="none" if not gaps else "confirmation_required",
+            risk_status=risk_status,
             final_outcome="pending_confirmation",
         )
 

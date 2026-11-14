@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date
-from uuid import uuid4
 
 from pantry.agents.orchestrator import OneRunOrchestrator
 from pantry.models import Run, TriggerEvent
@@ -42,19 +41,15 @@ class Worker:
         results: list[Run] = []
         for bus_event in self.store.list_bus_events(status="pending", limit=limit):
             try:
-                self.store.set_bus_event_status(bus_event.dedupe_key, "dispatched")
                 event = self._event_context(bus_event)
                 run, created = self.orchestrator.create_run(event)
                 if created:
                     run = self.orchestrator.execute(event)
+                self.store.set_bus_event_status(bus_event.dedupe_key, "dispatched")
                 results.append(run)
             except Exception:
-                # Leave failed processing visible as a failed bus event when the
-                # Store supports that status; the original error remains raised.
-                try:
-                    self.store.set_bus_event_status(bus_event.dedupe_key, "failed")
-                finally:
-                    raise
+                # Keep the event pending so the next worker tick can retry it.
+                raise
         return results
 
     def execute_event(self, event: TriggerEvent) -> Run:

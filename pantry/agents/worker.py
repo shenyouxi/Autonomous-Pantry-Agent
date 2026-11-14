@@ -48,8 +48,11 @@ class Worker:
                 self.store.set_bus_event_status(bus_event.dedupe_key, "dispatched")
                 results.append(run)
             except Exception:
-                # Keep the event pending so the next worker tick can retry it.
-                raise
+                # Keep failed processing visible; preserve the original error.
+                try:
+                    self.store.set_bus_event_status(bus_event.dedupe_key, "failed")
+                finally:
+                    raise
         return results
 
     def execute_event(self, event: TriggerEvent) -> Run:

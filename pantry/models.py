@@ -15,7 +15,7 @@ Unit = Literal["pcs", "g", "ml"]
 DateLabel = Literal["use_by", "best_before", "estimated_quality", "none"]
 TriggerType = Literal["EXPIRY_IMMINENT", "STOCK_DEPLETED", "CONSTRAINT_SHIFT"]
 Severity = Literal["high", "low"]
-BusEventStatus = Literal["pending", "dispatched", "ignored"]
+BusEventStatus = Literal["pending", "dispatched", "ignored", "failed"]
 InventoryEventType = Literal["RESERVED", "RELEASED", "CONSUMED", "ADJUSTED"]
 RunState = Literal[
     "TRIGGERED",

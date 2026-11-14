@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from pantry import rules
 from pantry.llm import FakeLLM, LLMOutputError, OpenNextLLM, prompt_key
 from pantry.models import (
+    AutoRunState,
     BusEvent,
     Command,
     Ingredient,
@@ -446,3 +447,32 @@ def test_opennext_llm_uses_json_mode_and_retries_with_error():
     assert "invalid" in retry["messages"][-1]["content"]
     assert llm.embed(["a", "b"]) == [[1.0, 0.0], [0.0, 1.0]]
     assert client.requests[-1]["model"] == "text-embedding-3-small"
+
+
+# --- auto-run control state ---------------------------------------------------
+
+
+def test_auto_run_defaults_to_off(store):
+    state = store.get_auto_run()
+    assert (state.mode, state.days_completed, state.max_days, state.pause_reason) == ("off", 0, 3, None)
+
+
+def test_auto_run_round_trip(store):
+    saved = store.set_auto_run(AutoRunState(mode="paused", days_completed=2, max_days=5, pause_reason="allergen"))
+    assert store.get_auto_run() == saved
+    assert (saved.mode, saved.days_completed, saved.max_days, saved.pause_reason) == ("paused", 2, 5, "allergen")
+
+
+def test_auto_run_persists_in_file_store(tmp_path):
+    s = JsonStore(data_dir=tmp_path, start_date=START)
+    saved = s.set_auto_run(AutoRunState(mode="running", days_completed=1))
+    assert JsonStore(data_dir=tmp_path).get_auto_run() == saved
+
+
+def test_reset_demo_resets_auto_run_to_off(store):
+    store.set_auto_run(AutoRunState(mode="paused", days_completed=2, pause_reason="allergen"))
+    store.reset_demo(START)
+    state = store.get_auto_run()
+    assert (state.mode, state.days_completed, state.max_days, state.pause_reason) == ("off", 0, 3, None)
+    store.reset_demo(START)
+    assert store.get_auto_run().mode == "off"

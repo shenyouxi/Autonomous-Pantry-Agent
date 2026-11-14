@@ -20,6 +20,7 @@ from pantry import rules
 from pantry.config import DEFAULT_DEMO_START_DATE
 from pantry.models import (
     TERMINAL_RUN_STATES,
+    AutoRunState,
     BusEvent,
     BusEventStatus,
     Command,
@@ -114,6 +115,7 @@ class JsonStore(Store):
         self._search_cache: dict[str, SearchCacheEntry] = {}
         self._plan_cache: dict[str, PlanCacheEntry] = {}
         self._commands: dict[str, Command] = {}
+        self._auto_run = AutoRunState()
 
     def _snapshot(self) -> dict[str, Any]:
         """Serialise the full state into JSON-compatible data."""
@@ -136,6 +138,7 @@ class JsonStore(Store):
             "search_cache": dump(self._search_cache.values()),
             "plan_cache": dump(self._plan_cache.values()),
             "commands": dump(self._commands.values()),
+            "auto_run": self._auto_run.model_dump(mode="json"),
         }
 
     def _restore(self, data: dict[str, Any]) -> None:
@@ -155,6 +158,7 @@ class JsonStore(Store):
         self._search_cache = {d["key"]: SearchCacheEntry.model_validate(d) for d in data.get("search_cache", [])}
         self._plan_cache = {d["key"]: PlanCacheEntry.model_validate(d) for d in data.get("plan_cache", [])}
         self._commands = {d["command_id"]: Command.model_validate(d) for d in data.get("commands", [])}
+        self._auto_run = AutoRunState.model_validate(data["auto_run"]) if data.get("auto_run") else AutoRunState()
 
     def _load(self) -> None:
         """Load state from the backing file."""
@@ -249,6 +253,7 @@ class JsonStore(Store):
             self._feedback = {}
             self._traces = {tid: t for tid, t in self._traces.items() if t.is_seed}
             self._profile = self._profile.model_copy(update={"today": start_date.isoformat()})
+            self._auto_run = AutoRunState()
             self._rescore_all()
             return counts
 
@@ -742,6 +747,19 @@ class JsonStore(Store):
             updated = command.model_copy(update={"status": status, "error": error, "processed_at": utc_now()})
             self._commands[command_id] = updated
             return updated.model_copy(deep=True)
+
+    # ------------------------------------------------------------------
+    # Auto-run control state
+    # ------------------------------------------------------------------
+
+    def get_auto_run(self) -> AutoRunState:
+        with self._lock:
+            return self._auto_run.model_copy(deep=True)
+
+    def set_auto_run(self, state: AutoRunState) -> AutoRunState:
+        with self._write():
+            self._auto_run = state.model_copy(deep=True)
+            return self._auto_run.model_copy(deep=True)
 
 
 def _json_default(value: Any) -> Any:

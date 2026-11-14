@@ -10,6 +10,7 @@ import pytest
 from pantry.config import Settings
 from pantry.llm import FakeLLM
 from pantry.models import (
+    AutoRunState,
     BusEvent,
     Command,
     Ingredient,
@@ -210,3 +211,15 @@ def test_integration_unique_keys_feedback_and_commands(mongo_store: MongoStore) 
     assert mongo_store.poll_commands() == []
     assert mongo_store.get_run("run-1").created_at.tzinfo is not None
     assert datetime.now(timezone.utc) >= mongo_store.get_run("run-1").created_at
+
+
+def test_integration_auto_run_round_trip_and_reset(mongo_store: MongoStore) -> None:
+    seed(mongo_store)
+    assert mongo_store.get_auto_run().mode == "off"
+    saved = mongo_store.set_auto_run(AutoRunState(mode="paused", days_completed=2, max_days=5, pause_reason="allergen"))
+    assert mongo_store.get_auto_run() == saved
+    assert mongo_store.get_auto_run().updated_at.tzinfo is not None
+
+    mongo_store.reset_demo(START)
+    state = mongo_store.get_auto_run()
+    assert (state.mode, state.days_completed, state.max_days, state.pause_reason) == ("off", 0, 3, None)

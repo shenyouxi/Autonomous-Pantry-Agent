@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from datetime import date
 
 from pantry.models import (
+    AutoRunState,
     BusEvent,
     BusEventStatus,
     Command,
@@ -55,7 +56,7 @@ class Store(ABC):
     def reset_demo(self, start_date: date) -> dict[str, int]:
         """Restore day 1: baseline inventory, today=start_date, and clear runs, bus_events, commands,
         inventory_events, shopping_list, feedback and non-seed traces. Keeps search_cache, plan_cache
-        and seed traces. Idempotent; returns the number of documents removed or restored per collection."""
+        and seed traces, and sets the auto-run state back to the default off state. Idempotent; returns the number of documents removed or restored per collection."""
 
     # ------------------------------------------------------------------
     # Simulated clock and user profile
@@ -276,3 +277,15 @@ class Store(ABC):
     @abstractmethod
     def mark_command(self, command_id: str, status: CommandStatus, error: str | None = None) -> Command:
         """Set a command's status (done or failed), error and processed_at."""
+
+    # ------------------------------------------------------------------
+    # Auto-run control state
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    def get_auto_run(self) -> AutoRunState:
+        """Return the single auto-run control state, or the default off state if none was stored."""
+
+    @abstractmethod
+    def set_auto_run(self, state: AutoRunState) -> AutoRunState:
+        """Replace the auto-run control state and return it as stored."""

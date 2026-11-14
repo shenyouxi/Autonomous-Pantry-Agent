@@ -24,6 +24,7 @@ from pantry.config import Settings, get_settings
 from pantry.llm import embedding_dimension
 from pantry.models import (
     TERMINAL_RUN_STATES,
+    AutoRunState,
     BusEvent,
     BusEventStatus,
     Command,
@@ -57,6 +58,7 @@ R = TypeVar("R")
 
 VECTOR_INDEX_NAME: str = "trace_vector_index"
 PROFILE_ID: str = "profile"
+AUTO_RUN_ID: str = "auto_run"
 LOCAL_RECENT_LIMIT: int = 500  # local immediate search scans at most this many newest accepted traces
 INDEX_STATUS_TTL_SECONDS: float = 30.0
 DEFAULT_SERVER_SELECTION_TIMEOUT_MS: int = 10_000
@@ -75,6 +77,7 @@ SHOPPING_LIST = "shopping_list"
 SEARCH_CACHE = "search_cache"
 PLAN_CACHE = "plan_cache"
 COMMANDS = "commands"
+CONTROL = "control"  # internal: single-document control state (auto-run)
 
 # The four unique indexes required by the build prompt, then the ones needed for id lookups.
 REQUIRED_UNIQUE_INDEXES: tuple[tuple[str, str], ...] = (
@@ -445,6 +448,7 @@ class MongoStore(Store):
                 )
             profile = self._profile_doc(s).model_copy(update={"today": start_date.isoformat()})
             self._write_profile(profile, s)
+            self._col(CONTROL).replace_one({"_id": AUTO_RUN_ID}, to_doc(AutoRunState()), upsert=True, session=s)
             return counts
 
         return self._txn(write)
@@ -937,6 +941,18 @@ class MongoStore(Store):
         if doc is None:
             raise KeyError(f"Unknown command_id {command_id!r}")
         return from_doc(Command, doc)
+
+    # ------------------------------------------------------------------
+    # Auto-run control state
+    # ------------------------------------------------------------------
+
+    def get_auto_run(self) -> AutoRunState:
+        doc = self._col(CONTROL).find_one({"_id": AUTO_RUN_ID})
+        return AutoRunState() if doc is None else from_doc(AutoRunState, doc)
+
+    def set_auto_run(self, state: AutoRunState) -> AutoRunState:
+        self._col(CONTROL).replace_one({"_id": AUTO_RUN_ID}, to_doc(state), upsert=True)
+        return as_stored(state)
 
 
 __all__ = [

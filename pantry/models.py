@@ -44,8 +44,11 @@ CommandType = Literal[
     "UNDO_RUN",
     "COOKED",
     "SET_CONSTRAINT",
+    "START_AUTO_RUN",
+    "PAUSE_AUTO_RUN",
 ]
 CommandStatus = Literal["pending", "done", "failed"]
+AutoRunMode = Literal["off", "running", "paused"]
 GapKind = Literal["MISSING", "INSUFFICIENT"]
 Confidence = Literal["high", "medium", "low"]
 ResolverTool = Literal["linkup", "tavily", "llm", "cache", "demo_injection"]
@@ -377,3 +380,18 @@ class Command(DocModel):
     error: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     processed_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# auto-run control state
+# ---------------------------------------------------------------------------
+
+
+class AutoRunState(DocModel):
+    """The single auto-run control document; the default is off with no days completed."""
+
+    mode: AutoRunMode = "off"
+    days_completed: int = 0
+    max_days: int = 3
+    pause_reason: str | None = None
+    updated_at: datetime = Field(default_factory=utc_now)

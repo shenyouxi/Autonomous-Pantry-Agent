@@ -92,11 +92,14 @@ class OneRunOrchestrator:
         with trace_step(self.store, run_id, "Embedding") as step:
             embedding = self.llm.embed([snapshot_text])[0]
             step.set(dimensions=len(embedding))
-            step.checkpoint("SEEDS_RETRIEVED", {"embedding_dimensions": len(embedding)})
 
         with trace_step(self.store, run_id, "vector_search") as step:
             retrieved, degraded = self.store.search_traces(embedding, event.trigger, k=3)
             step.set(hits=len(retrieved))
+            step.checkpoint(
+                "SEEDS_RETRIEVED",
+                {"embedding_dimensions": len(embedding), "hits": len(retrieved)},
+            )
             if degraded:
                 step.degrade("vector search degraded to local fallback")
 

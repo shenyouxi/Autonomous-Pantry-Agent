@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 from pantry.agents.orchestrator import OneRunOrchestrator
 from pantry.agents.worker import Worker
 from pantry.llm import FakeLLM
@@ -41,3 +43,41 @@ def test_worker_dispatches_one_pending_event_to_one_run():
 
     worker.dispatch_pending()
     assert len(store.list_runs()) == 1
+
+
+def test_worker_marks_bus_event_failed_when_processing_raises():
+    store = JsonStore.memory()
+    store.seed_pantry([
+        Ingredient(
+            item_name="milk",
+            quantity=1,
+            unit="ml",
+            expiry_date=date(2026, 11, 15),
+        ),
+    ])
+
+    store.recompute_priorities()
+
+    from pantry import rules
+
+    events = rules.detect_triggers(store.list_items(), store.get_today())
+    assert events
+    assert store.emit_bus_event(events[0]) is True
+
+    llm = FakeLLM()
+    orchestrator = OneRunOrchestrator(store, llm)
+    worker = Worker(store, orchestrator)
+
+    def fail_execute(event):
+        raise RuntimeError("simulated orchestration failure")
+
+    orchestrator.execute = fail_execute
+
+    with pytest.raises(RuntimeError, match="simulated orchestration failure"):
+        worker.dispatch_pending()
+
+    failed_events = store.list_bus_events(status="failed")
+
+    assert len(failed_events) == 1
+    assert failed_events[0].dedupe_key == events[0].dedupe_key
+    assert store.list_bus_events(status="pending") == []

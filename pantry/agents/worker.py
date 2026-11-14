@@ -1,5 +1,6 @@
 from __future__ import annotations
-
+from pantry import rules
+from pantry.models import BusEvent
 from datetime import date
 from typing import Any
 
@@ -36,7 +37,20 @@ class Worker:
             constraints=profile.constraints,
             allergens=list(profile.allergens),
         )
+    def tick(self) -> list[BusEvent]:
+        """Detect today's triggers and emit each new event once."""
+        today = self.store.get_today()
+        detected = rules.detect_triggers(
+            self.store.list_items(),
+            today,
+        )
 
+        emitted: list[BusEvent] = []
+        for event in detected:
+            if self.store.emit_bus_event(event):
+                emitted.append(event)
+
+        return emitted
     def dispatch_pending(self, limit: int = 50) -> list[Run]:
         results: list[Run] = []
 

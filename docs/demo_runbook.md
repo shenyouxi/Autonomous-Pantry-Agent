@@ -39,10 +39,11 @@ One-page checklist for running the three-round Pantry Agent demo. Run every comm
 
 ## 3. Start the system
 
-- **Worker** (consumes commands and runs the agent). Pending B: this entry point is not implemented yet.
+- **Worker** (consumes commands and runs the agent):
   ```bash
-  python -m pantry.agents.worker
+  STORE_BACKEND=mongo python -m pantry.agents.worker
   ```
+  The current offline `FakeLLM` has no registered `PlannerOutput`, so do not use the worker for the scripted demo until B adds that registration or a cached planner path.
 - **Operator commands** (enqueue one worker command; `--list` shows the auto-run state, runs and their ids):
   ```bash
   python scripts/send_command.py ADVANCE_CLOCK | APPROVE --run-id ID | REJECT --run-id ID | UNDO_RUN --run-id ID | FEEDBACK --trace-id ID --outcome accepted|rejected
@@ -55,7 +56,9 @@ One-page checklist for running the three-round Pantry Agent demo. Run every comm
   ```bash
   streamlit run pantry/ui/app.py
   ```
-  Right now this is a scripted preview that reads `seed_data/demo_script.json` ("Live agent events are not connected yet"). The live command buttons are a TODO: confirm with C.
+  The UI reads live inventory, runs, traces, resolver sources and feedback from the selected Store. It writes `ADVANCE_CLOCK`, `APPROVE`, `REJECT` and `FEEDBACK` commands and displays their pending/done/failed status. `seed_data/demo_script.json` remains visible as a reference tab.
+
+  **Offline blocker:** `JsonStore` is single-process and keeps an in-memory snapshot. A separately started worker will not reliably observe commands written by the Streamlit process. Use Mongo when running worker and UI as separate processes, or keep the offline E2E flow in one process until a shared JSON runtime is implemented.
 
 ## 4. Demo flow (from `seed_data/demo_script.json`)
 
@@ -67,7 +70,7 @@ Script settings: `auto_run: true` and `auto_accept_non_risk: true`. These are se
 | Day 2 (2026-11-15, day_index 1) | ADVANCE_CLOCK, then `EXPIRY_IMMINENT`: eggs, 2 days | ADVANCE_CLOCK only | Planner proposes creamy carbonara for 4 (r6). **Memory retrieval shows the Round 1 trace in the UI.** The cream substitution is reused at a smaller scale (56.25 ml milk + 18.75 g butter). The plan is auto-accepted and eggs go 6 → 3. |
 | Day 3 (2026-11-16, day_index 2) | ADVANCE_CLOCK, then `EXPIRY_IMMINENT`: baby spinach, 2 days | ADVANCE_CLOCK, then **REJECT** (1 click) | Resolver surfaces walnut pesto (r4). The allergen gate flags guest u3 (peanuts, tree nuts), the run pauses at `pending_confirmation`, and a risk card shows the source and the affected guest. There is no generic Accept button. After REJECT, the state is `rejected`, the inventory deduction is 0, and the rejected feedback is searchable. |
 
-Commands: `ADVANCE_CLOCK`, `APPROVE`, `REJECT` and `FEEDBACK` are defined in `pantry/models.py` (`CommandType`). The UI shows a feedback result only after its command status is `done`. How each command is sent (button or CLI) is a TODO: confirm with C.
+Commands: `ADVANCE_CLOCK`, `APPROVE`, `REJECT` and `FEEDBACK` are defined in `pantry/models.py` (`CommandType`). The UI writes them through `Store.enqueue_command()` and shows feedback or inventory results only after the worker marks a command `done`. Failed commands remain visible with their error message.
 
 ## 5. If something goes wrong
 

@@ -15,7 +15,7 @@ from pantry.models import (
 )
 from pantry.store.base import Store
 from pantry.tracing import save_decision_trace, trace_id_for_run
-
+from pantry.agents.autorun import AutoRunner
 
 class Worker:
     """Dispatch bus events and process worker commands."""
@@ -320,6 +320,8 @@ class Worker:
         return {"today": today.isoformat()}
 
     def _dispatch_command(self, command: Command) -> dict[str, str]:
+        if command.type in {"START_AUTO_RUN", "PAUSE_AUTO_RUN"}:
+            return self.autorun.handle(command)
         if command.type == "FEEDBACK":
             trace_id = str(command.payload["trace_id"])
             outcome = command.payload["outcome"]
@@ -383,7 +385,14 @@ def build_worker(settings=None):
     except LLMConfigError:
         llm = FakeLLM(embed_model=settings.embed_model)
 
-    orchestrator = OneRunOrchestrator(store, llm)
+        orchestrator = OneRunOrchestrator(
+        store,
+        llm,
+        search_client=search_client,
+    )
+    worker = Worker(store, orchestrator)
+    worker.autorun = AutoRunner(store, worker)
+    return store, worker
     return store, Worker(store, orchestrator)
 
 
@@ -398,6 +407,7 @@ def main() -> None:
         worker.process_commands()
         worker.tick()
         worker.dispatch_pending()
+        worker.autorun.tick()
         time.sleep(settings.tick_seconds)
 
 

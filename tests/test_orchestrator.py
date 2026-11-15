@@ -133,3 +133,59 @@ def test_tracked_item_with_partial_stock_stays_insufficient():
     gaps = OneRunOrchestrator._gaps(plan, items, allergens=[])
 
     assert gaps == [Gap(name="eggs", needed=2.0, unit="pcs", kind="INSUFFICIENT")]
+
+
+class ContextRecordingResolver(RecordingResolver):
+    """RecordingResolver that also records the inventory context passed with each gap."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.contexts: list[str] = []
+
+    def resolve_gap(self, gap: Gap, snapshot_text: str = ""):
+        self.contexts.append(snapshot_text)
+        return super().resolve_gap(gap, snapshot_text)
+
+
+def test_resolver_context_lists_available_not_total_stock():
+    store = JsonStore.memory()
+    store.seed_pantry([
+        Ingredient(item_name="greek yogurt", quantity=250, reserved=200, unit="g", expiry_date=date(2026, 11, 20)),
+        Ingredient(item_name="eggs", quantity=6, reserved=6, unit="pcs", expiry_date=date(2026, 11, 20)),
+    ])
+    llm = FakeLLM()
+    llm.register(
+        "PlannerOutput",
+        {**EGG_PLAN, "ingredients": [{"name": "buttermilk", "amount": 100, "unit": "ml"}]},
+    )
+    resolver = ContextRecordingResolver()
+    # Snapshot built at trigger time, before other runs reserved stock.
+    event = _egg_event(store).model_copy(update={
+        "snapshot_text": "trigger=EXPIRY_IMMINENT; expiring=none; have=eggs,greek yogurt; constraint=30min; "
+        "allergens=none; inventory=eggs 6 pcs; greek yogurt 250 g; servings=2",
+    })
+
+    OneRunOrchestrator(store, llm, resolver=resolver).execute(event)
+
+    assert resolver.contexts == [
+        "trigger=EXPIRY_IMMINENT; expiring=none; have=eggs,greek yogurt; constraint=30min; "
+        "allergens=none; inventory=greek yogurt 50 g; servings=2"
+    ]
+
+
+def test_resolver_extractor_prompt_requires_exact_inventory_names():
+    store = JsonStore.memory()
+    llm = FakeLLM()
+    seen: list[str] = []
+
+    def chat_json(system, user, schema):
+        seen.append(system)
+        return {"substitute_name": "yogurt", "components": [{"name": "greek yogurt"}], "confidence": "high"}
+
+    llm.chat_json = chat_json
+    orchestrator = OneRunOrchestrator(store, llm)
+
+    orchestrator._extract_resolver_output("query", {"answer": "", "sources": []})
+
+    assert "copy its name exactly as written in the query's inventory list" in seen[0]
+    assert "staples (salt, water, pepper, oil, vinegar) may be named freely" in seen[0]

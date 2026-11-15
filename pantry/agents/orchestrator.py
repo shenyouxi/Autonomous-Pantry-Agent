@@ -74,7 +74,10 @@ class OneRunOrchestrator:
         system = (
             "You are a cooking substitution extractor. "
             "Extract one practical substitute and its component amounts "
-            "from the sourced answer. Return only the requested schema."
+            "from the sourced answer. Return only the requested schema. "
+            "When a substitute component is an item the pantry holds, copy its "
+            "name exactly as written in the query's inventory list; staples "
+            "(salt, water, pepper, oil, vinegar) may be named freely."
         )
         user = (
             f"Query: {query}\n"
@@ -93,6 +96,25 @@ class OneRunOrchestrator:
             idempotency_key=event.dedupe_key,
         )
         return self.store.create_run(run)
+
+    def _resolver_context(self, snapshot_text: str, items: Sequence[Ingredient]) -> str:
+        """Return snapshot_text with its inventory= segment rebuilt from current available stock.
+
+        The snapshot is built when the trigger fires, so reservations made by other runs since then are
+        missing from it. Each item is re-read from the store and listed as "name available unit" with
+        available = quantity - reserved, only when available > 0, sorted by name (as build_snapshot_text).
+        """
+        if "inventory=" not in snapshot_text:
+            return snapshot_text
+        stock = []
+        for item in items:
+            current = self.store.get_item(item.item_name) or item
+            stock.append((clean_name(current.item_name), current.quantity - current.reserved, current.unit))
+        inventory = "; ".join(f"{name} {available:g} {unit}" for name, available, unit in sorted(stock) if available > 0)
+        parts = snapshot_text.split("; ")
+        start = next(i for i, part in enumerate(parts) if part.startswith("inventory="))
+        end = next((i for i in range(start + 1, len(parts)) if parts[i].startswith("servings=")), len(parts))
+        return "; ".join(parts[:start] + [f"inventory={inventory or 'none'}"] + parts[end:])
 
     @staticmethod
     def _gaps(plan, items: Sequence[Ingredient], allergens: Sequence[str]) -> list[Gap]:
@@ -184,11 +206,12 @@ class OneRunOrchestrator:
             with trace_step(self.store, run_id, "Resolver") as step:
                 step.set(gaps=len(missing_gaps))
                 resolved = []
+                resolver_context = self._resolver_context(snapshot_text, event.items_ranked)
 
                 for gap in missing_gaps:
                     output, action = self.resolver.resolve_gap(
                         gap,
-                        snapshot_text,
+                        resolver_context,
                     )
                     resolver_actions.append(action)
                     resolved.append(

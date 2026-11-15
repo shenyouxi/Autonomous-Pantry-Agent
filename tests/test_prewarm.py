@@ -115,22 +115,17 @@ def test_live_run_fills_search_cache_and_memory_check_holds() -> None:
     assert store.list_runs(limit=100) == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B: Planner has no plan_cache and the Resolver extractor calls the LLM on cache hits",
-)
 def test_prewarm_fills_caches_and_offline_replay_passes() -> None:
     code, output = run(prewarm.fake_context())
     assert "PASS offline replay" in output, output
     assert code == 0
 
 
-def test_offline_replay_failure_names_the_b_gap() -> None:
+def test_offline_replay_passes_with_b_caches() -> None:
     code, output = run(prewarm.fake_context())
-    assert code != 0
-    assert "FAIL offline replay" in output
-    assert "Day 1: plan_cache miss, snapshot_text:" in output
-    assert "Planner called the LLM instead of serving plan_cache" in output
+    assert code == 0, output
+    assert "PASS offline replay" in output
+    assert "cache entries created: search_cache=3, plan_cache=3" in output
 
 
 def test_replay_passes_with_cache_aware_planner_and_extractor() -> None:
@@ -162,5 +157,5 @@ def test_removed_cache_entry_fails_replay_and_names_it(kind: str) -> None:
     assert "FAIL offline replay" in output
     assert removed["line"] in output, output
     assert "Day 1: ok" in output
-    blocked = "Linkup search" if kind == "search" else "LLM chat_json(PlannerOutput)"
-    assert f"Day 2: blocked {blocked}" in output
+    if kind == "search":
+        assert "Day 2: blocked Linkup search" in output

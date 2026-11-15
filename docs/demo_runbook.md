@@ -43,11 +43,14 @@ One-page checklist for running the three-round Pantry Agent demo. Run every comm
   ```bash
   python -m pantry.agents.worker
   ```
-- **Operator commands** (enqueue one worker command; `--list` shows runs and their ids):
+- **Operator commands** (enqueue one worker command; `--list` shows the auto-run state, runs and their ids):
   ```bash
   python scripts/send_command.py ADVANCE_CLOCK | APPROVE --run-id ID | REJECT --run-id ID | UNDO_RUN --run-id ID | FEEDBACK --trace-id ID --outcome accepted|rejected
+  python scripts/send_command.py START_AUTO_RUN [--max-days N]
+  python scripts/send_command.py PAUSE_AUTO_RUN
   python scripts/send_command.py --list
   ```
+  Always run scripts/reset_demo.py before each rehearsal: START_AUTO_RUN does not reset days_completed, so a finished auto-run turns itself off again immediately.
 - **UI**:
   ```bash
   streamlit run pantry/ui/app.py

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pantry.models import ConfirmationRequest, Run, Trace
+from pantry.models import AutoRunState, ConfirmationRequest, Run, Trace
 from pantry.store.json_store import JsonStore
 from scripts import send_command
 from tests.conftest import START
@@ -37,6 +37,9 @@ def store() -> JsonStore:
             "FEEDBACK",
             {"trace_id": TRACE_ID, "outcome": "rejected", "source": "user"},
         ),
+        (["START_AUTO_RUN"], "START_AUTO_RUN", {}),
+        (["START_AUTO_RUN", "--max-days", "5"], "START_AUTO_RUN", {"max_days": 5}),
+        (["PAUSE_AUTO_RUN"], "PAUSE_AUTO_RUN", {}),
     ],
 )
 def test_each_command_is_enqueued_with_expected_payload(store, capsys, argv, expected_type, expected_payload):
@@ -60,6 +63,7 @@ def test_each_command_is_enqueued_with_expected_payload(store, capsys, argv, exp
         ["FEEDBACK", "--trace-id", TRACE_ID],
         ["FEEDBACK", "--outcome", "accepted"],
         ["ADVANCE_CLOCK", "--days", "0"],
+        ["START_AUTO_RUN", "--max-days", "0"],
         ["NOT_A_COMMAND"],
     ],
 )
@@ -89,4 +93,14 @@ def test_list_highlights_pending_confirmation(store, capsys):
     done_line = next(line for line in lines if "run:done" in line)
     assert "PENDING_CONFIRMATION" in pending_line and "rule=allergen" in pending_line
     assert "PENDING_CONFIRMATION" not in done_line
+    assert store.poll_commands() == []
+
+
+def test_list_prints_auto_run_state(store, capsys):
+    store.set_auto_run(AutoRunState(mode="paused", days_completed=2, max_days=4, pause_reason="manual"))
+
+    assert send_command.main(["--list"], store=store) == 0
+
+    out = capsys.readouterr().out
+    assert "auto_run mode=paused days_completed=2 max_days=4 pause_reason=manual" in out
     assert store.poll_commands() == []

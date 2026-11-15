@@ -1,5 +1,6 @@
 # Operator CLI: enqueue one worker command on the STORE_BACKEND store, or list runs to find run ids.
-# Payloads match Worker._dispatch_command in pantry/agents/worker.py; only the worker processes commands.
+# Payloads match Worker._dispatch_command in pantry/agents/worker.py and AutoRunner.handle in
+# pantry/agents/autorun.py; only the worker processes commands.
 from __future__ import annotations
 
 import argparse
@@ -16,7 +17,8 @@ from pantry.store.base import Store  # noqa: E402
 from pantry.tracing import trace_id_for_run  # noqa: E402
 
 RUN_COMMANDS: tuple[str, ...] = ("APPROVE", "REJECT", "UNDO_RUN")
-COMMANDS: tuple[str, ...] = ("ADVANCE_CLOCK", *RUN_COMMANDS, "FEEDBACK")
+AUTO_RUN_COMMANDS: tuple[str, ...] = ("START_AUTO_RUN", "PAUSE_AUTO_RUN")
+COMMANDS: tuple[str, ...] = ("ADVANCE_CLOCK", *RUN_COMMANDS, "FEEDBACK", *AUTO_RUN_COMMANDS)
 LIST_LIMIT: int = 50
 
 
@@ -25,7 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Enqueue a worker command, or list runs with --list.",
         epilog=(
             "examples: ADVANCE_CLOCK | APPROVE --run-id ID | REJECT --run-id ID | UNDO_RUN --run-id ID | "
-            "FEEDBACK --trace-id ID --outcome accepted|rejected | --list"
+            "FEEDBACK --trace-id ID --outcome accepted|rejected | START_AUTO_RUN [--max-days N] | "
+            "PAUSE_AUTO_RUN | --list"
         ),
     )
     parser.add_argument("command", nargs="?", choices=COMMANDS, help="command type to enqueue")
@@ -33,8 +36,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trace-id", help="trace id for FEEDBACK")
     parser.add_argument("--outcome", choices=["accepted", "rejected"], help="feedback outcome for FEEDBACK")
     parser.add_argument("--days", type=int, default=1, help="days to advance for ADVANCE_CLOCK (default 1)")
+    parser.add_argument(
+        "--max-days", type=int, default=None,
+        help="day limit for START_AUTO_RUN (default: the worker's AutoRunner default)",
+    )
     parser.add_argument("--backend", choices=["mongo", "json"], help="override STORE_BACKEND")
-    parser.add_argument("--list", action="store_true", help="print runs and their state, then exit")
+    parser.add_argument("--list", action="store_true", help="print auto-run state and runs, then exit")
     parser.add_argument(
         "--wait", type=float, default=0.0, metavar="SECONDS",
         help="poll until the worker marks the command done or failed (default: do not wait)",
@@ -56,12 +63,28 @@ def build_payload(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         if not args.trace_id or not args.outcome:
             parser.error("FEEDBACK requires --trace-id and --outcome accepted|rejected")
         return {"trace_id": args.trace_id, "outcome": args.outcome, "source": "user"}
+    if args.command == "START_AUTO_RUN":
+        if args.max_days is None:
+            return {}
+        if args.max_days < 1:
+            parser.error("--max-days must be a positive integer")
+        return {"max_days": args.max_days}
+    if args.command == "PAUSE_AUTO_RUN":
+        return {}
     parser.error("a command or --list is required")
     raise AssertionError("unreachable")
 
 
 def is_pending(run: Run) -> bool:
     return run.state == "PENDING_CONFIRMATION" or run.pending_confirmation is not None
+
+
+def print_auto_run(store: Store) -> None:
+    state = store.get_auto_run()
+    print(
+        f"auto_run mode={state.mode} days_completed={state.days_completed} "
+        f"max_days={state.max_days} pause_reason={state.pause_reason or '-'}"
+    )
 
 
 def print_runs(store: Store) -> None:
@@ -107,6 +130,7 @@ def main(argv: list[str] | None = None, store: Store | None = None) -> int:
         store = make_store(args.backend or settings.store_backend, settings)
 
     if args.list:
+        print_auto_run(store)
         print_runs(store)
         return 0
 

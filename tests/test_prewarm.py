@@ -159,3 +159,15 @@ def test_removed_cache_entry_fails_replay_and_names_it(kind: str) -> None:
     assert "Day 1: ok" in output
     if kind == "search":
         assert "Day 2: blocked Linkup search" in output
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    from pantry.config import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()

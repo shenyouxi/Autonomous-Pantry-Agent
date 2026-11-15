@@ -13,7 +13,7 @@ def test_resolver_searches_and_caches_result():
             calls.append((query, depth))
             return FakeLinkupClient().search(query, depth)
 
-    resolver = Resolver(store, Client())
+    resolver = Resolver(store, Client(), cache_first=True)
     gap = Gap(name="egg", needed=1, unit="pcs", kind="MISSING")
 
     first, first_action = resolver.resolve_gap(gap)

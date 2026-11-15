@@ -313,15 +313,26 @@ def detect_triggers(items: Iterable[Ingredient], today: date | str) -> list[BusE
 # ---------------------------------------------------------------------------
 
 
+# No servings / household-size field exists in UserProfile or config, so the planner targets this default.
+PLAN_SERVINGS = 2
+
+
 def build_snapshot_text(
     trigger: TriggerType,
     items: Sequence[Ingredient],
     today: date | str,
     max_minutes: int,
     allergens: Iterable[str],
+    servings: int = PLAN_SERVINGS,
+    with_inventory: bool = True,
 ) -> str:
     """Build the deterministic snapshot, for example
-    "trigger=EXPIRY_IMMINENT; expiring=milk(2d); have=eggs,flour; constraint=25min; allergens=nuts".
+    "trigger=EXPIRY_IMMINENT; expiring=milk(2d); have=eggs,flour; constraint=25min; allergens=nuts;
+    inventory=eggs 6 pcs; flour 250 g; milk 700 ml; servings=2".
+
+    inventory (appended after the original fields) lists every live item with available = quantity - reserved
+    > 0 as "name amount unit", sorted by name; servings is the number of servings the planner must plan for.
+    with_inventory=False omits both (seed traces, whose synthetic items carry no real quantities).
 
     Expired items are excluded. expiring lists items with 0 <= days <= 2 (soonest first); depleted lists
     items at or below safety stock; have lists the other items with physical quantity > 0, by name.
@@ -345,4 +356,9 @@ def build_snapshot_text(
     if depleted:
         parts.append(f"depleted={','.join(sorted(depleted))}")
     parts += [f"have={','.join(sorted(have)) or 'none'}", f"constraint={max_minutes}min", f"allergens={allergen_text}"]
+    if not with_inventory:
+        return "; ".join(parts)
+    stock = sorted((clean_name(item.item_name), item.quantity - item.reserved, item.unit) for item in live)
+    inventory = "; ".join(f"{name} {available:g} {unit}" for name, available, unit in stock if available > 0)
+    parts += [f"inventory={inventory or 'none'}", f"servings={servings}"]
     return "; ".join(parts)

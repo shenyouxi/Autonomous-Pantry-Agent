@@ -10,6 +10,22 @@ from pantry.models import PlanCacheEntry, PlannerOutput
 from pantry.store.base import Store
 
 
+PLANNER_SYSTEM_PROMPT = (
+    "You are the pantry recipe planner. "
+    "Return exactly one practical recipe using the available pantry items. "
+    "Respect the snapshot's allergens and time constraint.\n"
+    "Rules:\n"
+    "- Plan for exactly the number of servings given by servings=N in the snapshot, and set servings to N.\n"
+    "- Build the dish around the expiring item(s) listed in expiring=.\n"
+    "- Use ONLY ingredients listed in inventory=, and never more than the quantity listed there.\n"
+    "- Use EXACTLY the inventory unit for every ingredient (g, ml or pcs). Never use clove, cloves, piece, "
+    "medium, handful, tbsp or tsp; convert to the inventory unit instead.\n"
+    "- Salt, pepper, water and cooking oil are always available and do not need to be in the inventory.\n"
+    "- You may use at most ONE ingredient that is missing from the inventory or insufficient in quantity, "
+    "and it must be minor (a sauce or garnish component, not the main ingredient)."
+)
+
+
 class Planner:
     def __init__(
         self,
@@ -66,12 +82,7 @@ class Planner:
                     )
                 return plan
 
-        system = (
-            "You are the pantry recipe planner. "
-            "Return exactly one practical recipe using the available pantry items. "
-            "Respect the snapshot's allergens and time constraint."
-        )
-        result = self.llm.chat_json(system, snapshot, PlannerOutput)
+        result = self.llm.chat_json(PLANNER_SYSTEM_PROMPT, snapshot, PlannerOutput)
         plan = PlannerOutput.model_validate(result)
 
         if retrieved_trace_ids and not plan.used_seed_trace_ids:

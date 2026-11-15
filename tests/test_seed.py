@@ -97,7 +97,7 @@ def test_seed_traces_are_marked_and_embedded_with_runtime_snapshot(seed_dir: Pat
     # snapshot_text equals what the runtime Sentinel builds for the same pantry state.
     seeded_items = [i for i in store.list_items()]
     shifted = START + timedelta(days=1)  # milk at 2 days left
-    runtime = rules.build_snapshot_text("EXPIRY_IMMINENT", seeded_items, shifted, 25, ["nuts"])
+    runtime = rules.build_snapshot_text("EXPIRY_IMMINENT", seeded_items, shifted, 25, ["nuts"], with_inventory=False)
     assert traces["seed-001"].snapshot_text == runtime
     assert traces["seed-001"].embedding == llm.embed([runtime])[0]
     assert traces["seed-002"].snapshot_text.startswith("trigger=STOCK_DEPLETED; expiring=none; depleted=eggs;")

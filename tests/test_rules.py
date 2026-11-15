@@ -197,7 +197,8 @@ def test_snapshot_text_uses_relative_days_and_excludes_expired():
     ]
     text = rules.build_snapshot_text("EXPIRY_IMMINENT", items, TODAY, 25, ["nuts"])
     assert text == (
-        "trigger=EXPIRY_IMMINENT; expiring=milk(2d); have=butter,eggs,flour,sugar; constraint=25min; allergens=nuts"
+        "trigger=EXPIRY_IMMINENT; expiring=milk(2d); have=butter,eggs,flour,sugar; constraint=25min; allergens=nuts; "
+        "inventory=butter 250 g; eggs 10 pcs; flour 1000 g; milk 1000 ml; sugar 500 g; servings=2"
     )
     assert "2026" not in text and "yogurt" not in text
 
@@ -218,4 +219,21 @@ def test_snapshot_text_is_identical_across_shifted_rounds():
 def test_snapshot_text_lists_depleted_items():
     items = [make_item("eggs", 1, 14, safety=2, unit="pcs"), make_item("flour", 1000, 180, safety=200)]
     text = rules.build_snapshot_text("STOCK_DEPLETED", items, TODAY, 25, [])
-    assert text == "trigger=STOCK_DEPLETED; expiring=none; depleted=eggs; have=flour; constraint=25min; allergens=none"
+    assert text == (
+        "trigger=STOCK_DEPLETED; expiring=none; depleted=eggs; have=flour; constraint=25min; allergens=none; "
+        "inventory=eggs 1 pcs; flour 1000 g; servings=2"
+    )
+
+
+def test_snapshot_text_appends_available_inventory_deterministically():
+    items = [
+        make_item("penne", 500, 30, reserved=250),
+        make_item("milk", 700, 1, unit="ml"),
+        make_item("eggs", 6, 3, unit="pcs"),
+        make_item("ham", 100, 5, reserved=100),
+        make_item("yogurt", 200, -1),
+    ]
+    text = rules.build_snapshot_text("EXPIRY_IMMINENT", items, TODAY, 25, [])
+    assert text.startswith("trigger=EXPIRY_IMMINENT; expiring=milk(1d); have=eggs,ham,penne; constraint=25min;")
+    assert text.endswith("; inventory=eggs 6 pcs; milk 700 ml; penne 250 g; servings=2")
+    assert text == rules.build_snapshot_text("EXPIRY_IMMINENT", list(reversed(items)), TODAY, 25, [])

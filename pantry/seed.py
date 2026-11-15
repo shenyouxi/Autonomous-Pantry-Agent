@@ -183,7 +183,8 @@ def seed_snapshot_text(row: Mapping[str, Any], start_date: date) -> str:
     for name in row.get("have", []):
         items.append(Ingredient(item_name=rules.clean_name(name), quantity=1, unit="pcs"))
     return rules.build_snapshot_text(
-        row["trigger"], items, start_date, _max_minutes(row.get("constraints")), row.get("allergens", [])
+        row["trigger"], items, start_date, _max_minutes(row.get("constraints")), row.get("allergens", []),
+        with_inventory=False,
     )
 
 

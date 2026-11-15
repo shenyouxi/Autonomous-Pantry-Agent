@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import date
 from uuid import uuid4
-
+from pantry.agents.resolver import Resolver
+from pantry.tools.linkup import FakeLinkupClient
 from pantry.agents.planner import Planner
 from pantry.agents.sentinel import Sentinel
 from pantry.llm import LLM
@@ -38,12 +39,18 @@ class OneRunOrchestrator:
         *,
         planner: Planner | None = None,
         sentinel: Sentinel | None = None,
+        resolver: Resolver | None = None,
+        search_client=None,
         day_index: int = 0,
     ) -> None:
         self.store = store
         self.llm = llm
         self.planner = planner or Planner(llm)
         self.sentinel = sentinel or Sentinel()
+        self.resolver = resolver or Resolver(
+            store,
+            search_client or FakeLinkupClient(),
+        )
         self.day_index = day_index
 
     def create_run(self, event: TriggerEvent) -> tuple[Run, bool]:
@@ -115,7 +122,31 @@ class OneRunOrchestrator:
         with trace_step(self.store, run_id, "GapCheck") as step:
             step.set(gaps=len(gaps))
             step.checkpoint("GAP_CHECKED", {"gaps": [gap.model_dump() for gap in gaps]})
+            resolver_actions = []
+        missing_gaps = [gap for gap in gaps if gap.kind == "MISSING"]
 
+        if missing_gaps:
+            with trace_step(self.store, run_id, "Resolver") as step:
+                step.set(gaps=len(missing_gaps))
+                resolved = []
+
+                for gap in missing_gaps:
+                    output, action = self.resolver.resolve_gap(
+                        gap,
+                        snapshot_text,
+                    )
+                    resolver_actions.append(action)
+                    resolved.append(
+                        {
+                            "gap": gap.model_dump(),
+                            "substitute": output.model_dump(),
+                        }
+                    )
+
+                step.checkpoint(
+                    "RESOLVING",
+                    {"resolved": resolved},
+                )
         risk_status = "allergen" if any(
             matches_allergen(clean_name(ingredient.name), allergens)
             for ingredient in plan.ingredients
@@ -131,6 +162,7 @@ class OneRunOrchestrator:
             constraints=[str(event.constraints.model_dump())],
             plan=plan,
             retrieved_traces=retrieved,
+        resolver_actions=resolver_actions,
             risk_status=risk_status,
             final_outcome="pending_confirmation",
         )

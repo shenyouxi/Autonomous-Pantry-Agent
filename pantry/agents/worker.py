@@ -311,3 +311,38 @@ class Worker:
 
     def execute_event(self, event: TriggerEvent) -> Run:
         return self.orchestrator.execute(event)
+
+
+def build_worker(settings=None):
+    from pantry.config import get_settings
+    from pantry.llm import FakeLLM, LLMConfigError, OpenNextLLM
+    from pantry.store.factory import make_store
+
+    settings = settings or get_settings()
+    store = make_store(None, settings)
+
+    try:
+        llm = OpenNextLLM(settings)
+    except LLMConfigError:
+        llm = FakeLLM(embed_model=settings.embed_model)
+
+    orchestrator = OneRunOrchestrator(store, llm)
+    return store, Worker(store, orchestrator)
+
+
+def main() -> None:
+    import time
+    from pantry.config import get_settings
+
+    settings = get_settings()
+    _, worker = build_worker(settings)
+
+    while True:
+        worker.process_commands()
+        worker.tick()
+        worker.dispatch_pending()
+        time.sleep(settings.tick_seconds)
+
+
+if __name__ == "__main__":
+    main()

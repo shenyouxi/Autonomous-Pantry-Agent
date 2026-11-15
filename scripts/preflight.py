@@ -20,7 +20,6 @@ REQUIRED_VARS: tuple[str, ...] = (
     "MONGODB_URI",
     "MONGODB_DB",
     "LINKUP_API_KEY",
-    "TAVILY_API_KEY",
     "EMBED_PROVIDER",
     "EMBED_MODEL",
     "STORE_BACKEND",
@@ -108,10 +107,9 @@ def check_chat_json() -> str:
 
 
 def check_search_keys() -> str:
-    missing = [name for name in ("LINKUP_API_KEY", "TAVILY_API_KEY") if not _is_set(name)]
-    if missing:
-        raise RuntimeError(f"unset: {', '.join(missing)} (no API call made)")
-    return "LINKUP_API_KEY and TAVILY_API_KEY set (no API call made)"
+    if not _is_set("LINKUP_API_KEY"):
+        raise RuntimeError("unset: LINKUP_API_KEY (no API call made)")
+    return "LINKUP_API_KEY set (no API call made)"
 
 
 CHECKS: tuple[tuple[str, Callable[[], str], str], ...] = (
@@ -120,7 +118,7 @@ CHECKS: tuple[tuple[str, Callable[[], str], str], ...] = (
     ("mongo ping", check_mongo, "set STORE_BACKEND=json to run offline"),
     ("embedding dim", check_embedding, "FakeLLM embeddings (EMBED_PROVIDER=local is not implemented yet)"),
     ("chat json mode", check_chat_json, "FakeLLM / cached plans with CACHE_FIRST=true"),
-    ("search keys", check_search_keys, "FakeLinkupClient / FakeTavilyClient or the search cache"),
+    ("search keys", check_search_keys, "FakeLinkupClient or the search cache"),
 )
 
 

@@ -16,6 +16,7 @@ All files must be written in English: code, comments, docstrings, JSON data, mar
 - Store / JsonStore / MongoStore -> pantry/store/base.py, json_store.py, mongo_store.py
 - LinkupClient / FakeLinkupClient -> pantry/tools/linkup.py
 - TavilyClient / FakeTavilyClient -> pantry/tools/tavily.py
+- Tavily is not used (team decision: Linkup only); pantry/tools/tavily.py does not exist.
 - LLM (abstract) / OpenNextLLM / FakeLLM -> pantry/llm.py
 - Initial data: seed_data/ at repo root (handwritten); demo script data in seed_data/demo_script.json
 - Scripts: scripts/seed.py, preflight.py, reset_demo.py, prewarm.py

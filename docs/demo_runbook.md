@@ -50,14 +50,14 @@ This cached run has **no Resolver/Linkup step and no allergen gate**. Do not nar
 
 **Purpose**: the cached run has no gap, so it never calls Linkup. This standalone script shows the Resolver live: a missing ingredient → real Linkup search → LLM extraction → pantry check, with cited source links. It writes no runs, traces, events or inventory; it only adds its own `search_cache` entry.
 
-**When**: right after `reset_demo.py` (so the pantry is at Day 1 stock), in a fourth terminal, before or after the auto-run. Never run it while a rehearsal is half-way through a day.
+**When**: run it with the worker **stopped** (or before it is started), right after `python scripts/reset_demo.py`, so the pantry is the clean Day 1 stock. Do not run it while the worker is running: `reset_demo.py` makes a running worker start the Day 1 run immediately, which reserves stock, and the script then reads inconsistent quantities. Alternatively, run it after the three days have finished and accept the depleted stock. Afterwards, restart the worker and run `python scripts/reset_demo.py` again before the auto-run.
 
 - **Terminal 4 (Linkup stage, optional)**
   ```bash
   python scripts/linkup_demo.py                                          # default: eggs, 2 pcs
-  python scripts/linkup_demo.py --item "heavy cream" --amount 200 --unit ml
+  python scripts/linkup_demo.py --item "heavy cream" --amount 200 --unit ml --no-cache   # stage version
   ```
-  It needs network and takes from a few seconds to roughly fifteen seconds, because Linkup and the LLM are called live.
+  It needs network and takes from a few seconds to roughly fifteen seconds, because Linkup and the LLM are called live. Without `--no-cache`, a repeated query is served from `search_cache` and prints "Linkup and LLM not called", so use `--no-cache` when showing it live.
 
 **What to say**: the agent found a sourced substitute. If the substitute cannot be covered from the pantry, or the units cannot be converted (for example cups to grams), the system refuses to guess and a human must confirm.
 

@@ -414,3 +414,164 @@ def test_reservation_raises_for_missing_non_staple_substitute_component():
 
     with pytest.raises(ValueError, match="missing substitute item 'saffron'"):
         worker._reservation_events(_run_with_substitute(store, "saffron"))
+
+
+# --- auto-approve gap gate -------------------------------------------------
+
+
+class _StubResolver:
+    """Returns a fixed substitute for every MISSING gap."""
+
+    def __init__(self, components):
+        self.components = components
+
+    def resolve_gap(self, gap, snapshot_text=""):
+        from pantry.models import ResolverAction, ResolverOutput
+
+        output = ResolverOutput(
+            substitute_name="stub substitute",
+            components=self.components,
+            confidence="high",
+        )
+        return output, ResolverAction(tool="cache", query=gap.name)
+
+
+def _dispatch_with_saffron_gap(pantry, components):
+    """Dispatch one run whose plan needs milk plus a missing 'saffron' (a MISSING gap)."""
+    from pantry import rules
+
+    store = JsonStore.memory()
+    store.seed_pantry(pantry)
+    store.recompute_priorities()
+    llm = FakeLLM()
+    llm.register(
+        "PlannerOutput",
+        {
+            "dish_name": "Milk dish",
+            "servings": 1,
+            "est_minutes": 10,
+            "ingredients": [
+                {"name": "milk", "amount": 1, "unit": "ml"},
+                {"name": "saffron", "amount": 1, "unit": "g"},
+            ],
+            "steps": ["Prepare milk"],
+        },
+    )
+    events = rules.detect_triggers(store.list_items(), store.get_today())
+    milk_event = next(e for e in events if e.item_name == "milk")
+    assert store.emit_bus_event(milk_event) is True
+
+    orchestrator = OneRunOrchestrator(store, llm, resolver=_StubResolver(components))
+    worker = Worker(store, orchestrator)
+    approve_calls = []
+    real_approve = worker._approve
+    worker._approve = lambda command: approve_calls.append(command) or real_approve(command)
+
+    runs = worker.dispatch_pending()
+    assert len(runs) == 1
+    assert store.list_bus_events(status="pending") == []
+    assert store.list_bus_events(status="failed") == []
+    return store, runs[0], approve_calls
+
+
+def _milk(**extra):
+    return Ingredient(item_name="milk", quantity=5, unit="ml", expiry_date=date(2026, 11, 15), **extra)
+
+
+def test_gap_resolved_by_substitute_in_pantry_is_auto_approved():
+    store, run, approve_calls = _dispatch_with_saffron_gap(
+        [_milk(), Ingredient(item_name="turmeric", quantity=10, unit="g")],
+        [{"name": "turmeric", "amount": 2, "unit": "g"}],
+    )
+    assert len(approve_calls) == 1
+    assert run.state == "RECORDED"
+
+
+def test_gap_with_missing_non_staple_component_is_not_approved():
+    store, run, approve_calls = _dispatch_with_saffron_gap(
+        [_milk()],
+        [{"name": "turmeric", "amount": 2, "unit": "g"}],
+    )
+    assert approve_calls == []
+    assert run.state == "GATED"
+
+
+def test_gap_with_insufficient_component_quantity_is_not_approved():
+    store, run, approve_calls = _dispatch_with_saffron_gap(
+        [_milk(), Ingredient(item_name="turmeric", quantity=1, unit="g")],
+        [{"name": "turmeric", "amount": 2, "unit": "g"}],
+    )
+    assert approve_calls == []
+    assert run.state == "GATED"
+
+
+@pytest.mark.parametrize("staple", ["white vinegar", "salt"])
+def test_gap_with_staple_component_not_in_pantry_counts_as_resolved(staple):
+    store, run, approve_calls = _dispatch_with_saffron_gap(
+        [_milk(), Ingredient(item_name="turmeric", quantity=10, unit="g")],
+        [
+            {"name": "turmeric", "amount": 2, "unit": "g"},
+            {"name": staple, "amount": 1, "unit": "tsp"},
+        ],
+    )
+    assert len(approve_calls) == 1
+    assert run.state == "RECORDED"
+
+
+def test_gap_with_unconvertible_component_unit_is_not_approved():
+    store, run, approve_calls = _dispatch_with_saffron_gap(
+        [_milk(), Ingredient(item_name="turmeric", quantity=100, unit="g")],
+        [{"name": "turmeric", "amount": 1, "unit": "tbsp"}],
+    )
+    assert approve_calls == []
+    assert run.state == "GATED"
+
+
+def test_gap_without_substitute_is_unresolved():
+    from pantry.models import Run
+
+    store = JsonStore.memory()
+    store.seed_pantry([_milk()])
+    worker = Worker(store, OneRunOrchestrator(store, FakeLLM()))
+    run = Run(
+        run_id="run:no-substitute",
+        trigger="STOCK_DEPLETED",
+        item_name="milk",
+        state="GATED",
+        idempotency_key="test:no-substitute",
+        checkpoints={
+            "GAP_CHECKED": {"gaps": [{"name": "saffron", "needed": 1.0, "unit": "g", "kind": "MISSING"}]},
+        },
+    )
+    assert worker._has_unresolved_gaps(run) is True
+    assert worker._unresolved_gaps(run) == ["saffron"]
+
+
+def test_run_without_gaps_is_auto_approved():
+    from pantry import rules
+
+    store = JsonStore.memory()
+    store.seed_pantry([_milk()])
+    store.recompute_priorities()
+    llm = FakeLLM()
+    llm.register(
+        "PlannerOutput",
+        {
+            "dish_name": "Milk dish",
+            "servings": 1,
+            "est_minutes": 10,
+            "ingredients": [{"name": "milk", "amount": 1, "unit": "ml"}],
+            "steps": ["Prepare milk"],
+        },
+    )
+    events = rules.detect_triggers(store.list_items(), store.get_today())
+    assert store.emit_bus_event(events[0]) is True
+    worker = Worker(store, OneRunOrchestrator(store, llm))
+    approve_calls = []
+    real_approve = worker._approve
+    worker._approve = lambda command: approve_calls.append(command) or real_approve(command)
+
+    runs = worker.dispatch_pending()
+
+    assert len(approve_calls) == 1
+    assert runs[0].state == "RECORDED"

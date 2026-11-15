@@ -376,6 +376,7 @@ def build_worker(settings=None):
     from pantry.config import get_settings
     from pantry.llm import FakeLLM, LLMConfigError, OpenNextLLM
     from pantry.store.factory import make_store
+    from pantry.tools.linkup import FakeLinkupClient, LinkupClient
 
     settings = settings or get_settings()
     store = make_store(None, settings)
@@ -385,7 +386,12 @@ def build_worker(settings=None):
     except LLMConfigError:
         llm = FakeLLM(embed_model=settings.embed_model)
 
-        orchestrator = OneRunOrchestrator(
+    try:
+        search_client = LinkupClient(settings.linkup_api_key)
+    except RuntimeError:
+        search_client = FakeLinkupClient()
+
+    orchestrator = OneRunOrchestrator(
         store,
         llm,
         search_client=search_client,
@@ -393,7 +399,6 @@ def build_worker(settings=None):
     worker = Worker(store, orchestrator)
     worker.autorun = AutoRunner(store, worker)
     return store, worker
-    return store, Worker(store, orchestrator)
 
 
 def main() -> None:

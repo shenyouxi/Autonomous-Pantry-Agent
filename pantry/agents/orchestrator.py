@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import date
 from uuid import uuid4
 from pantry.agents.resolver import Resolver
+from pantry.agents.units import normalise_quantity
 from pantry.tools.linkup import FakeLinkupClient
 from pantry.agents.planner import Planner
 from pantry.agents.sentinel import Sentinel
@@ -24,6 +26,8 @@ from pantry.tracing import (
     trace_id_for_run,
     trace_step,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OneRunOrchestrator:
@@ -99,15 +103,24 @@ class OneRunOrchestrator:
             item = available.get(name)
             if item is None and not is_staple(name):
                 gaps.append(Gap(name=name, needed=ingredient.amount, unit=ingredient.unit, kind="MISSING"))
-            elif item is not None and item.quantity < ingredient.amount:
-                gaps.append(
-                    Gap(
-                        name=name,
-                        needed=round(ingredient.amount - item.quantity, 6),
-                        unit=ingredient.unit,
-                        kind="INSUFFICIENT",
+            elif item is not None:
+                normalised = normalise_quantity(ingredient.amount, ingredient.unit, item.unit)
+                if normalised is None:
+                    logger.warning(
+                        "gap check: skipping %r, cannot convert %r to pantry unit %r",
+                        name, ingredient.unit, item.unit,
                     )
-                )
+                    continue
+                amount, unit = normalised
+                if item.quantity < amount:
+                    gaps.append(
+                        Gap(
+                            name=name,
+                            needed=round(amount - item.quantity, 6),
+                            unit=unit,
+                            kind="INSUFFICIENT",
+                        )
+                    )
         return gaps
 
     def execute(self, event: TriggerEvent) -> Run:

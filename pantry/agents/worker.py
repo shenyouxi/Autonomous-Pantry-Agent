@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 from pantry import rules
 from pantry.models import BusEvent
 from datetime import date
@@ -16,6 +17,9 @@ from pantry.models import (
 from pantry.store.base import Store
 from pantry.tracing import save_decision_trace, trace_id_for_run
 from pantry.agents.autorun import AutoRunner
+from pantry.agents.units import normalise_quantity
+
+logger = logging.getLogger(__name__)
 
 class Worker:
     """Dispatch bus events and process worker commands."""
@@ -79,13 +83,21 @@ class Worker:
                 )
                 results.append(run)
             except Exception:
+                # One bad Run must not kill the worker. The bus event is marked
+                # "failed" (so it is never listed as pending again and the Run is
+                # not retried); the Run itself is left in whatever state it reached.
+                logger.exception(
+                    "dispatch failed for bus event %r", bus_event.dedupe_key
+                )
                 try:
                     self.store.set_bus_event_status(
                         bus_event.dedupe_key,
                         "failed",
                     )
-                finally:
-                    raise
+                except Exception:
+                    logger.exception(
+                        "could not mark bus event %r failed", bus_event.dedupe_key
+                    )
 
         return results
 
@@ -138,11 +150,15 @@ class Worker:
                     unit = component.get("unit") or item.unit
                     if amount is None or amount <= 0:
                         continue
-                    if unit != item.unit:
-                        raise ValueError(
-                            f"Cannot approve run {run.run_id}: unit mismatch "
-                            f"for {item.item_name!r}"
+                    normalised = normalise_quantity(amount, unit, item.unit)
+                    if normalised is None:
+                        logger.warning(
+                            "run %s: not reserving substitute %r, cannot convert "
+                            "%r to pantry unit %r",
+                            run.run_id, item.item_name, unit, item.unit,
                         )
+                        continue
+                    amount = normalised[0]
 
                     events.append(
                         InventoryEvent(
@@ -165,19 +181,24 @@ class Worker:
                     f"missing pantry item {ingredient.name!r}"
                 )
 
-            if ingredient.unit != item.unit:
-                raise ValueError(
-                    f"Cannot approve run {run.run_id}: unit mismatch "
-                    f"for {item.item_name!r}"
+            normalised = normalise_quantity(
+                ingredient.amount, ingredient.unit, item.unit
+            )
+            if normalised is None:
+                logger.warning(
+                    "run %s: not reserving %r, cannot convert %r to pantry unit %r",
+                    run.run_id, item.item_name, ingredient.unit, item.unit,
                 )
+                continue
+            amount = normalised[0]
 
-            if ingredient.amount > 0:
+            if amount > 0:
                 events.append(
                     InventoryEvent(
                         event_id="",
                         item_name=item.item_name,
                         type="RESERVED",
-                        delta=ingredient.amount,
+                        delta=amount,
                         unit=item.unit,
                         estimated=ingredient.estimated,
                         run_id=run.run_id,
@@ -358,13 +379,21 @@ class Worker:
                     self.store.mark_command(command.command_id, "done")
                 )
             except Exception as exc:
-                processed.append(
-                    self.store.mark_command(
-                        command.command_id,
-                        "failed",
-                        error=f"{type(exc).__name__}: {exc}",
-                    )
+                logger.exception(
+                    "command %r (%s) failed", command.command_id, command.type
                 )
+                try:
+                    processed.append(
+                        self.store.mark_command(
+                            command.command_id,
+                            "failed",
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
+                    )
+                except Exception:
+                    logger.exception(
+                        "could not mark command %r failed", command.command_id
+                    )
 
         return processed
 

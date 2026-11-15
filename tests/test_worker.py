@@ -80,8 +80,8 @@ def test_worker_marks_bus_event_failed_when_processing_raises():
 
     orchestrator.execute = fail_execute
 
-    with pytest.raises(RuntimeError, match="simulated orchestration failure"):
-        worker.dispatch_pending()
+    # The failure is logged and contained; it no longer propagates.
+    assert worker.dispatch_pending() == []
 
     failed_events = store.list_bus_events(status="failed")
 
@@ -290,3 +290,76 @@ def test_worker_advance_clock_commits_applied_runs():
     assert saved_run is not None
     assert saved_run.committed is True
     assert store.get_today().isoformat() == "2026-11-15"
+
+
+def test_worker_survives_approve_failure_and_does_not_retry_failed_run():
+    from pantry import rules
+
+    store = JsonStore.memory()
+    store.seed_pantry([
+        Ingredient(item_name="milk", quantity=1, unit="ml", expiry_date=date(2026, 11, 15)),
+        Ingredient(item_name="cream", quantity=1, unit="ml", expiry_date=date(2026, 11, 15)),
+    ])
+    store.recompute_priorities()
+    llm = FakeLLM()
+    llm.register(
+        "PlannerOutput",
+        {
+            "dish_name": "Milk dish",
+            "servings": 1,
+            "est_minutes": 10,
+            "ingredients": [{"name": "milk", "amount": 1, "unit": "ml"}],
+            "steps": ["Prepare milk"],
+        },
+    )
+    events = rules.detect_triggers(store.list_items(), store.get_today())
+    assert len(events) >= 2
+    for event in events:
+        assert store.emit_bus_event(event) is True
+
+    worker = Worker(store, OneRunOrchestrator(store, llm))
+    real_approve = worker._approve
+    approve_calls: list[str] = []
+    failing_run_ids: list[str] = []
+
+    def flaky_approve(command):
+        run_id = command.payload["run_id"]
+        approve_calls.append(run_id)
+        if not failing_run_ids or failing_run_ids == [run_id]:
+            failing_run_ids[:] = [run_id]
+            raise ValueError("simulated approve failure")
+        return real_approve(command)
+
+    worker._approve = flaky_approve
+
+    # Several iterations of the worker loop body: none of them may raise.
+    for _ in range(3):
+        worker.process_commands()
+        worker.tick()
+        worker.dispatch_pending()
+
+    assert len(failing_run_ids) == 1
+    failed_run_id = failing_run_ids[0]
+    # The failing run was attempted exactly once, never retried.
+    assert approve_calls.count(failed_run_id) == 1
+    # Every other run was still processed to the end.
+    others = [run for run in store.list_runs() if run.run_id != failed_run_id]
+    assert len(others) == len(events) - 1
+    assert all(run.state == "RECORDED" for run in others)
+    # The failed run's state was left as it was (not advanced to APPLIED/RECORDED).
+    failed_run = store.get_run(failed_run_id)
+    assert failed_run.state not in {"APPLIED", "RECORDED"}
+    assert "APPLIED" not in failed_run.checkpoints
+    assert len(store.list_bus_events(status="failed")) == 1
+    assert store.list_bus_events(status="pending") == []
+
+
+def test_process_commands_survives_failing_command():
+    store = JsonStore.memory()
+    worker = Worker(store, OneRunOrchestrator(store, FakeLLM()))
+    store.enqueue_command(Command(command_id="cmd-bad", type="APPROVE", payload={"run_id": "run:missing"}))
+
+    processed = worker.process_commands()
+    assert [c.status for c in processed] == ["failed"]
+    assert "Unknown run" in processed[0].error
+    assert worker.process_commands() == []

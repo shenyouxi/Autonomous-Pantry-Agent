@@ -44,7 +44,7 @@ def test_worker_dispatches_one_pending_event_to_one_run():
     runs = worker.dispatch_pending()
 
     assert len(runs) == 1
-    assert runs[0].state == "GATED"
+    assert runs[0].state == "RECORDED"
     assert len(store.list_runs()) == 1
     assert store.list_bus_events(status="pending") == []
 

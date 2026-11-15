@@ -62,6 +62,17 @@ class Worker:
                 if created:
                     run = self.orchestrator.execute(event)
 
+                    trace = self.store.get_trace_by_run(run.run_id)
+                    if trace is not None and trace.risk_status == "none":
+                        self._approve(
+                            Command(
+                                command_id=f"auto-approve:{run.run_id}",
+                                type="APPROVE",
+                                payload={"run_id": run.run_id},
+                            )
+                        )
+                        run = self.store.get_run(run.run_id) or run
+
                 self.store.set_bus_event_status(
                     bus_event.dedupe_key,
                     "dispatched",
@@ -96,9 +107,57 @@ class Worker:
 
     def _reservation_events(self, run) -> list[InventoryEvent]:
         plan = self._planned_output(run)
+        resolving = run.checkpoints.get("RESOLVING", {})
+        resolved_rows = resolving.get("resolved", [])
+
+        substitutions = {}
+        for row in resolved_rows:
+            gap = row.get("gap", {})
+            substitute = row.get("substitute", {})
+            substitutions[str(gap.get("name", "")).strip().lower()] = (
+                substitute.get("components", [])
+            )
+
         events: list[InventoryEvent] = []
 
         for ingredient in plan.ingredients:
+            name = ingredient.name.strip().lower()
+            components = substitutions.get(name)
+
+            if components is not None:
+                for component in components:
+                    component_name = str(component["name"])
+                    item = self.store.get_item(component_name)
+                    if item is None:
+                        raise ValueError(
+                            f"Cannot approve run {run.run_id}: "
+                            f"missing substitute item {component_name!r}"
+                        )
+
+                    amount = component.get("amount")
+                    unit = component.get("unit") or item.unit
+                    if amount is None or amount <= 0:
+                        continue
+                    if unit != item.unit:
+                        raise ValueError(
+                            f"Cannot approve run {run.run_id}: unit mismatch "
+                            f"for {item.item_name!r}"
+                        )
+
+                    events.append(
+                        InventoryEvent(
+                            event_id="",
+                            item_name=item.item_name,
+                            type="RESERVED",
+                            delta=float(amount),
+                            unit=item.unit,
+                            estimated=True,
+                            run_id=run.run_id,
+                            note=f"reserved substitute for {name}",
+                        )
+                    )
+                continue
+
             item = self.store.get_item(ingredient.name)
             if item is None:
                 raise ValueError(
@@ -108,25 +167,23 @@ class Worker:
 
             if ingredient.unit != item.unit:
                 raise ValueError(
-                    f"Cannot approve run {run.run_id}: unit mismatch for "
-                    f"{item.item_name!r}"
+                    f"Cannot approve run {run.run_id}: unit mismatch "
+                    f"for {item.item_name!r}"
                 )
 
-            if ingredient.amount <= 0:
-                continue
-
-            events.append(
-                InventoryEvent(
-                    event_id="",
-                    item_name=item.item_name,
-                    type="RESERVED",
-                    delta=ingredient.amount,
-                    unit=item.unit,
-                    estimated=ingredient.estimated,
-                    run_id=run.run_id,
-                    note=f"reserved for {plan.dish_name}",
+            if ingredient.amount > 0:
+                events.append(
+                    InventoryEvent(
+                        event_id="",
+                        item_name=item.item_name,
+                        type="RESERVED",
+                        delta=ingredient.amount,
+                        unit=item.unit,
+                        estimated=ingredient.estimated,
+                        run_id=run.run_id,
+                        note=f"reserved for {plan.dish_name}",
+                    )
                 )
-            )
 
         if not events:
             raise ValueError(f"Run {run.run_id} has no reservable ingredients")

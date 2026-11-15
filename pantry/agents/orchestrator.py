@@ -15,6 +15,7 @@ from pantry.models import (
     Run,
     Trace,
     TriggerEvent,
+    ResolverOutput,
 )
 from pantry.rules import clean_name, is_staple, matches_allergen
 from pantry.store.base import Store
@@ -47,11 +48,35 @@ class OneRunOrchestrator:
         self.llm = llm
         self.planner = planner or Planner(llm)
         self.sentinel = sentinel or Sentinel()
-        self.resolver = resolver or Resolver(
-            store,
-            search_client or FakeLinkupClient(),
-        )
+        if resolver is None:
+            self.resolver = Resolver(
+                store,
+                search_client or FakeLinkupClient(),
+                extractor=self._extract_resolver_output,
+            )
+        else:
+            self.resolver = resolver
+            self.resolver.extractor = self._extract_resolver_output
         self.day_index = day_index
+
+    def _extract_resolver_output(
+        self,
+        query: str,
+        result: dict,
+    ) -> ResolverOutput:
+        system = (
+            "You are a cooking substitution extractor. "
+            "Extract one practical substitute and its component amounts "
+            "from the sourced answer. Return only the requested schema."
+        )
+        user = (
+            f"Query: {query}\n"
+            f"Answer: {result.get('answer', '')}\n"
+            f"Sources: {result.get('sources', [])}"
+        )
+        return ResolverOutput.model_validate(
+            self.llm.chat_json(system, user, ResolverOutput)
+        )
 
     def create_run(self, event: TriggerEvent) -> tuple[Run, bool]:
         run = Run(

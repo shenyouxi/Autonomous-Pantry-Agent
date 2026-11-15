@@ -219,7 +219,6 @@ def advance_and_commit(h: Harness, run: Run, reservations: dict[str, float], lab
     assert_consistent(h.store, f"{label} after ADVANCE_CLOCK")
 
 
-@pytest.mark.xfail(strict=False, reason=MISSING_RESOLVER_WIRING)
 def test_three_day_demo_through_worker(seed_dir: Path) -> None:
     store = JsonStore.memory(start_date=START)
     llm = FakeLLM()

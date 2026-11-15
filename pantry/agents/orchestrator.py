@@ -106,6 +106,9 @@ class OneRunOrchestrator:
             item = available.get(name)
             if item is None and not is_staple(name):
                 gaps.append(Gap(name=name, needed=ingredient.amount, unit=ingredient.unit, kind="MISSING"))
+            elif item is not None and item.quantity - item.reserved <= 0:
+                # Tracked but nothing available: the Resolver must find a substitute, as for an untracked item.
+                gaps.append(Gap(name=name, needed=ingredient.amount, unit=ingredient.unit, kind="MISSING"))
             elif item is not None:
                 normalised = normalise_quantity(ingredient.amount, ingredient.unit, item.unit)
                 if normalised is None:

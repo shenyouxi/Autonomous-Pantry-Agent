@@ -74,9 +74,18 @@ def test_stock_depleted_does_not_fire_for_zero_stock(days):
     assert rules.detect_triggers([item], TODAY) == []
 
 
-def test_zero_stock_item_still_fires_expiry_imminent_only():
+def test_zero_stock_item_does_not_fire_expiry_imminent():
     item = make_item("milk", 0, 1, safety=200, unit="ml")
-    assert rules.trigger_types(item, TODAY) == ["EXPIRY_IMMINENT"]
+    assert rules.trigger_types(item, TODAY) == []
+
+
+def test_expiry_imminent_needs_available_stock():
+    zero = make_item("eggs", 0, 0, safety=2, unit="pcs")
+    fully_reserved = make_item("milk", 500, 0, safety=200, unit="ml", reserved=500)
+    stocked = make_item("butter", 250, 0, safety=50)
+    events = rules.detect_triggers([zero, fully_reserved, stocked], TODAY)
+    assert [(e.trigger_type, e.item_name) for e in events] == [("EXPIRY_IMMINENT", "butter")]
+    assert events[0].dedupe_key == "EXPIRY_IMMINENT:butter:2026-11-14"
 
 
 def test_stock_depleted_dedupe_key_is_stable_per_day():

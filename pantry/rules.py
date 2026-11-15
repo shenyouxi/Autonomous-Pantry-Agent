@@ -278,13 +278,15 @@ def trigger_types(item: Ingredient, today: date | str) -> list[TriggerType]:
     """Return the triggers this item fires today; expired items (days < 0) never fire.
 
     STOCK_DEPLETED fires only when 0 < quantity <= safety_stock: zero-stock items are intentional
-    missing ingredients for the Resolver and do not trigger.
+    missing ingredients for the Resolver and do not trigger. EXPIRY_IMMINENT needs available stock
+    (quantity - reserved > 0): there is nothing left to use up otherwise.
     """
     days = days_left(item.expiry_date, today)
     if days is not None and days < 0:
         return []
     fired: list[TriggerType] = []
-    if days is not None and 0 <= days <= EXPIRY_TRIGGER_MAX_DAYS:
+    available = item.quantity - item.reserved
+    if days is not None and 0 <= days <= EXPIRY_TRIGGER_MAX_DAYS and available > 0:
         fired.append(EXPIRY_IMMINENT)
     if 0 < item.quantity <= item.safety_stock:
         fired.append(STOCK_DEPLETED)

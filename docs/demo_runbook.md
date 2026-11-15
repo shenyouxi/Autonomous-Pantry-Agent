@@ -12,7 +12,7 @@ One-page checklist for running the three-round Pantry Agent demo. Run every comm
 - Copy `.env.example` to `.env` and fill it in. **Never paste secret values into chat, docs or commits.**
   - MongoDB: `MONGODB_URI`, `MONGODB_DB`, `STORE_BACKEND=mongo` (use `json` to run offline)
   - LLM: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `EMBED_PROVIDER=openai`, `EMBED_MODEL`
-  - Search: `LINKUP_API_KEY`, `TAVILY_API_KEY`
+  - Search: `LINKUP_API_KEY`
   - Tracing (optional): `MLFLOW_TRACKING_URI`, `DATABRICKS_HOST`, `DATABRICKS_TOKEN`
   - Demo: `DEMO_START_DATE=2026-11-14`, `TICK_SECONDS`, `CACHE_FIRST`
 
@@ -39,7 +39,15 @@ One-page checklist for running the three-round Pantry Agent demo. Run every comm
 
 ## 3. Start the system
 
-- **Worker** (consumes commands and runs the agent): TODO: confirm with B/C. The repo has no worker entry point yet.
+- **Worker** (consumes commands and runs the agent). Pending B: this entry point is not implemented yet.
+  ```bash
+  python -m pantry.agents.worker
+  ```
+- **Operator commands** (enqueue one worker command; `--list` shows runs and their ids):
+  ```bash
+  python scripts/send_command.py ADVANCE_CLOCK | APPROVE --run-id ID | REJECT --run-id ID | UNDO_RUN --run-id ID | FEEDBACK --trace-id ID --outcome accepted|rejected
+  python scripts/send_command.py --list
+  ```
 - **UI**:
   ```bash
   streamlit run pantry/ui/app.py
@@ -67,7 +75,7 @@ Commands: `ADVANCE_CLOCK`, `APPROVE`, `REJECT` and `FEEDBACK` are defined in `pa
   ```
   Look for `queryable: True`. While the index is not queryable, `search_traces` uses the local fallback. Rerunning `python scripts/seed.py` recreates the index and waits for it again.
 - **MLflow / Databricks down**: tracing is fail-safe. It logs one warning, disables MLflow for the process, and keeps writing to the Store. **The demo continues.**
-- **Linkup / Tavily down**: set `CACHE_FIRST=true` to use the search and plan caches, which `reset_demo` keeps. Preflight lists FakeLinkupClient / FakeTavilyClient as the offline fallback.
+- **Linkup down**: set `CACHE_FIRST=true` to use the search and plan caches, which `reset_demo` keeps. Preflight lists FakeLinkupClient or the search cache as the offline fallback.
 - **Mongo unreachable**: set `STORE_BACKEND=json`, then reseed and reset with `--backend json`.
 - **LLM down**: FakeLLM or cached plans with `CACHE_FIRST=true`. Seeding offline: `python scripts/seed.py --fake-llm` (similarity results will not be meaningful).
 
@@ -75,4 +83,4 @@ Commands: `ADVANCE_CLOCK`, `APPROVE`, `REJECT` and `FEEDBACK` are defined in `pa
 
 - In Atlas Network Access, remove the `0.0.0.0/0` IP allowlist entry.
 - Delete the Databricks personal access token (`DATABRICKS_TOKEN`).
-- Rotate the LLM, Linkup, Tavily and MongoDB credentials, and clear them from your local `.env`.
+- Rotate the LLM, Linkup and MongoDB credentials, and clear them from your local `.env`.

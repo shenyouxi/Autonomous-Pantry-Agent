@@ -575,3 +575,165 @@ def test_run_without_gaps_is_auto_approved():
 
     assert len(approve_calls) == 1
     assert runs[0].state == "RECORDED"
+
+
+# --- untracked staples in the plan ------------------------------------------
+
+
+def _dispatch_plan(pantry, ingredients, worker_setup=None, resolver=None):
+    """Emit one event for milk and dispatch it with a plan using ``ingredients``."""
+    from pantry import rules
+
+    store = JsonStore.memory()
+    store.seed_pantry(pantry)
+    store.recompute_priorities()
+    llm = FakeLLM()
+    llm.register(
+        "PlannerOutput",
+        {
+            "dish_name": "Milk soup",
+            "servings": 1,
+            "est_minutes": 10,
+            "ingredients": ingredients,
+            "steps": ["Prepare milk"],
+        },
+    )
+    events = rules.detect_triggers(store.list_items(), store.get_today())
+    milk_event = next(e for e in events if e.item_name == "milk")
+    assert store.emit_bus_event(milk_event) is True
+
+    worker = Worker(store, OneRunOrchestrator(store, llm, resolver=resolver))
+    if worker_setup is not None:
+        worker_setup(worker)
+    approve_calls = []
+    real_approve = worker._approve
+    worker._approve = lambda command: approve_calls.append(command) or real_approve(command)
+
+    runs = worker.dispatch_pending()
+    return store, worker, runs, approve_calls
+
+
+def test_plan_with_untracked_staples_is_auto_approved_and_reserves_tracked_only():
+    store, _, runs, approve_calls = _dispatch_plan(
+        [_milk(), Ingredient(item_name="flour", quantity=100, unit="g")],
+        [
+            {"name": "milk", "amount": 2, "unit": "ml"},
+            {"name": "flour", "amount": 10, "unit": "g"},
+            {"name": "salt", "amount": 1, "unit": "tsp"},
+            {"name": "pepper", "amount": 1, "unit": "tsp"},
+            {"name": "water", "amount": 200, "unit": "ml"},
+        ],
+    )
+
+    assert len(approve_calls) == 1
+    assert len(runs) == 1
+    assert runs[0].state == "RECORDED"
+    assert store.list_bus_events(status="failed") == []
+    assert store.list_bus_events(status="pending") == []
+
+    reserved = [e for e in store.list_events(run_id=runs[0].run_id) if e.type == "RESERVED"]
+    assert sorted((e.item_name, e.delta) for e in reserved) == [("flour", 10.0), ("milk", 2.0)]
+    for staple in ("salt", "pepper", "water"):
+        assert store.get_item(staple) is None
+
+
+def test_plan_with_untracked_non_staple_fails_safely():
+    from pantry.models import Run
+
+    # 1) The plan-ingredient check itself: an untracked non-staple raises and
+    #    no reservation events are applied.
+    store = JsonStore.memory()
+    store.seed_pantry([_milk()])
+    worker = Worker(store, OneRunOrchestrator(store, FakeLLM()))
+    run = Run(
+        run_id="run:untracked-non-staple",
+        trigger="STOCK_DEPLETED",
+        item_name="milk",
+        state="GATED",
+        idempotency_key="test:untracked-non-staple",
+        checkpoints={
+            "PLANNED": {
+                "plan": {
+                    "dish_name": "Milk soup",
+                    "servings": 1,
+                    "est_minutes": 10,
+                    "ingredients": [
+                        {"name": "milk", "amount": 2, "unit": "ml"},
+                        {"name": "salt", "amount": 1, "unit": "tsp"},
+                        {"name": "saffron", "amount": 1, "unit": "g"},
+                    ],
+                    "steps": ["Prepare milk"],
+                }
+            }
+        },
+    )
+    with pytest.raises(ValueError, match="missing pantry item 'saffron'"):
+        worker._reservation_events(run)
+    assert store.list_events() == []
+    assert store.get_item("milk").reserved == 0
+
+    # 2) Through dispatch_pending: a stub resolver (so the real Resolver and
+    #    FakeLLM are never reached) substitutes saffron with an untracked
+    #    non-staple. With the gap gate bypassed, approval must still refuse it,
+    #    the bus event is marked failed and the worker loop keeps going.
+    def skip_gap_gate(worker):
+        worker._unresolved_gaps = lambda run: []
+
+    store, worker, runs, approve_calls = _dispatch_plan(
+        [_milk()],
+        [
+            {"name": "milk", "amount": 2, "unit": "ml"},
+            {"name": "salt", "amount": 1, "unit": "tsp"},
+            {"name": "saffron", "amount": 1, "unit": "g"},
+        ],
+        worker_setup=skip_gap_gate,
+        resolver=_StubResolver([{"name": "turmeric", "amount": 1.0, "unit": "g"}]),
+    )
+
+    assert len(approve_calls) == 1
+    assert runs == []
+    assert len(store.list_bus_events(status="failed")) == 1
+    assert store.list_bus_events(status="pending") == []
+
+    [run] = store.list_runs()
+    assert run.state not in {"APPLIED", "RECORDED"}
+    assert "APPLIED" not in run.checkpoints
+    assert store.list_events(run_id=run.run_id) == []
+    assert store.get_item("milk").reserved == 0
+
+    # The worker loop keeps going and does not retry the failed run.
+    for _ in range(2):
+        worker.process_commands()
+        worker.tick()
+        worker.dispatch_pending()
+    assert len(approve_calls) == 1
+    assert len(store.list_bus_events(status="failed")) == 1
+
+
+def test_reservation_raises_for_missing_non_staple_plan_ingredient():
+    from pantry.models import Run
+
+    store = JsonStore.memory()
+    store.seed_pantry([Ingredient(item_name="milk", quantity=1, unit="ml")])
+    worker = Worker(store, OneRunOrchestrator(store, FakeLLM()))
+    plan = {
+        "dish_name": "Milk dish",
+        "servings": 1,
+        "est_minutes": 10,
+        "ingredients": [
+            {"name": "milk", "amount": 1, "unit": "ml"},
+            {"name": "saffron", "amount": 1, "unit": "g"},
+        ],
+        "steps": ["Prepare milk"],
+    }
+    run = Run(
+        run_id="run:plan-missing",
+        trigger="STOCK_DEPLETED",
+        item_name="milk",
+        state="GATED",
+        idempotency_key="test:plan-missing",
+        checkpoints={"PLANNED": {"plan": plan}},
+    )
+
+    with pytest.raises(ValueError, match="missing pantry item 'saffron'"):
+        worker._reservation_events(run)

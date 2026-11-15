@@ -235,6 +235,12 @@ class Worker:
                 continue
 
             item = self.store.get_item(ingredient.name)
+            if item is None and rules.is_staple(ingredient.name):
+                logger.warning(
+                    "run %s: not reserving %r, staple not tracked in pantry",
+                    run.run_id, ingredient.name,
+                )
+                continue
             if item is None:
                 raise ValueError(
                     f"Cannot approve run {run.run_id}: "

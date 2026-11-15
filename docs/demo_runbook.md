@@ -56,19 +56,19 @@ One-page checklist for running the three-round Pantry Agent demo. Run every comm
   ```bash
   streamlit run pantry/ui/app.py
   ```
-  The UI reads live inventory, runs, traces, resolver sources and feedback from the selected Store. It writes `ADVANCE_CLOCK`, `APPROVE`, `REJECT` and `FEEDBACK` commands and displays their pending/done/failed status. `seed_data/demo_script.json` remains visible as a reference tab.
+  The UI reads live inventory, runs, traces, resolver sources and feedback from the selected Store. It writes `ADVANCE_CLOCK`, `APPROVE`, `REJECT` and `FEEDBACK` commands and displays their pending/done/failed status. Dish names, gaps, quantities, substitutions and citations are rendered only from the persisted run/trace; the UI does not copy expected results from `demo_script.json`.
 
   **Offline blocker:** `JsonStore` is single-process and keeps an in-memory snapshot. A separately started worker will not reliably observe commands written by the Streamlit process. Use Mongo when running worker and UI as separate processes, or keep the offline E2E flow in one process until a shared JSON runtime is implemented.
 
-## 4. Demo flow (from `seed_data/demo_script.json`)
+## 4. Demo flow
 
-Script settings: `auto_run: true` and `auto_accept_non_risk: true`. These are separate from the stored auto-run state, which is off after reset. How it gets switched on for the demo is a TODO: confirm with B/C. A trigger fires once when an item first enters the 2-day urgency window. Each new day is reached with an **ADVANCE_CLOCK** command.
+The exact meal, gap, quantity, substitution and citation are outputs of the live planner and resolver. Do not narrate values from `demo_script.json`; read them from the selected run and trace in the UI after each step.
 
-| Day | Trigger | Operator action | Audience should see |
-| --- | --- | --- | --- |
-| Day 1 (2026-11-14, day_index 0) | `EXPIRY_IMMINENT`: milk, 1 day to use-by | None (0 clicks) | Planner proposes creamy garlic pasta for 2 (r5). Resolver finds 100 ml of double cream missing, and Linkup returns a cited substitute (75 ml milk + 25 g butter). The rule gate passes and the plan is **auto-accepted**. MEAL_COMPLETED applies the inventory changes (for example, milk 700 → 625 ml). An auto-accept feedback is written. |
-| Day 2 (2026-11-15, day_index 1) | ADVANCE_CLOCK, then `EXPIRY_IMMINENT`: eggs, 2 days | ADVANCE_CLOCK only | Planner proposes creamy carbonara for 4 (r6). **Memory retrieval shows the Round 1 trace in the UI.** The cream substitution is reused at a smaller scale (56.25 ml milk + 18.75 g butter). The plan is auto-accepted and eggs go 6 → 3. |
-| Day 3 (2026-11-16, day_index 2) | ADVANCE_CLOCK, then `EXPIRY_IMMINENT`: baby spinach, 2 days | ADVANCE_CLOCK, then **REJECT** (1 click) | Resolver surfaces walnut pesto (r4). The allergen gate flags guest u3 (peanuts, tree nuts), the run pauses at `pending_confirmation`, and a risk card shows the source and the affected guest. There is no generic Accept button. After REJECT, the state is `rejected`, the inventory deduction is 0, and the rejected feedback is searchable. |
+1. Start the bounded auto-run and watch the current day, run id and trace id.
+2. For each run, present the live timeline, retrieved decisions, resolver actions and cited sources.
+3. Non-risk results may proceed automatically according to the stored auto-run setting.
+4. At a safety gate, verify that the UI clearly shows `GATED` or `PENDING_CONFIRMATION` and that no inventory change has been applied. The allergen confirmation card offers Reject but no generic Accept action.
+5. If a run step or command fails, use the error banner/timeline or Command status tab, then reset before retrying.
 
 Commands: `ADVANCE_CLOCK`, `APPROVE`, `REJECT` and `FEEDBACK` are defined in `pantry/models.py` (`CommandType`). The UI writes them through `Store.enqueue_command()` and shows feedback or inventory results only after the worker marks a command `done`. Failed commands remain visible with their error message.
 

@@ -1,6 +1,6 @@
-from pantry.models import Trace
+from pantry.models import Run, RunStep, Trace
 from pantry.store.json_store import JsonStore
-from pantry.ui.live import command_status_row, enqueue_ui_command
+from pantry.ui.live import command_status_row, enqueue_ui_command, run_status_notice
 
 
 def test_ui_enqueues_real_run_command() -> None:
@@ -57,3 +57,37 @@ def test_ui_enqueues_bounded_auto_run() -> None:
 
     assert command.type == "START_AUTO_RUN"
     assert command.payload == {"max_days": 3}
+
+
+def _run(state: str, *, steps: list[RunStep] | None = None) -> Run:
+    return Run(
+        run_id=f"run-{state.lower()}",
+        trigger="EXPIRY_IMMINENT",
+        item_name="live item",
+        state=state,
+        steps=steps or [],
+        idempotency_key=f"test-{state.lower()}",
+    )
+
+
+def test_ui_highlights_gated_and_pending_runs() -> None:
+    assert run_status_notice(_run("GATED")) == (
+        "warning",
+        "Run is at the safety gate; no inventory change has been applied.",
+    )
+    assert run_status_notice(_run("PENDING_CONFIRMATION")) == (
+        "warning",
+        "Run is paused and requires human confirmation.",
+    )
+
+
+def test_ui_surfaces_failed_timeline_step() -> None:
+    run = _run(
+        "GATED",
+        steps=[RunStep(name="approve", status="failed", detail={"error": "unit mismatch"})],
+    )
+
+    assert run_status_notice(run) == (
+        "error",
+        "Run encountered an error: unit mismatch",
+    )

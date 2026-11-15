@@ -14,10 +14,7 @@ if str(REPO_ROOT) not in sys.path:
 from pantry.config import get_settings
 from pantry.store.factory import make_store
 from pantry.tracing import trace_id_for_run
-from pantry.ui.live import command_status_row, enqueue_ui_command
-
-
-DEMO_SCRIPT_PATH = REPO_ROOT / "seed_data" / "demo_script.json"
+from pantry.ui.live import command_status_row, enqueue_ui_command, run_status_notice
 
 
 def remember_command(command_id: str) -> None:
@@ -32,9 +29,6 @@ def send(command_type: str, payload: dict | None = None) -> None:
     remember_command(command.command_id)
     st.toast(f"Queued {command.type}: {command.command_id}")
 
-
-with DEMO_SCRIPT_PATH.open(encoding="utf-8") as file:
-    demo = json.load(file)
 
 st.set_page_config(page_title="Pantry Agent Demo", page_icon="🥬", layout="wide")
 st.title("Pantry Agent")
@@ -87,7 +81,7 @@ with st.sidebar:
 
 day_index = max((today - settings.demo_start_date).days, 0)
 st.header(f"Demo Day {day_index + 1} · Live runs")
-st.caption("All actions below use persisted Store data; scripted expectations remain available for comparison.")
+st.caption("All actions and decision details below come from persisted Store data.")
 
 items = store.list_items()
 inventory_rows = []
@@ -105,8 +99,8 @@ for item in items:
         }
     )
 
-inventory_tab, runs_tab, script_tab, commands_tab = st.tabs(
-    ["Live inventory", "Runs & decisions", "Script reference", "Command status"]
+inventory_tab, runs_tab, commands_tab = st.tabs(
+    ["Live inventory", "Runs & decisions", "Command status"]
 )
 
 with inventory_tab:
@@ -137,9 +131,16 @@ with runs_tab:
         trace_col.metric("Trace ID", trace_id)
         state_col.metric("State", run.state)
 
+        notice = run_status_notice(run)
+        if notice is not None:
+            level, message = notice
+            if level == "error":
+                st.error(message)
+            else:
+                st.warning(message)
+
         confirmation = run.pending_confirmation
         if confirmation is not None or run.state == "PENDING_CONFIRMATION":
-            st.warning("Human confirmation required")
             if confirmation is not None:
                 st.write(confirmation.evidence)
                 st.caption(f"Safety rule: {confirmation.rule}")
@@ -219,16 +220,6 @@ with runs_tab:
                     "FEEDBACK",
                     {"trace_id": trace.trace_id, "outcome": "rejected", "source": "user"},
                 )
-
-with script_tab:
-    round_number = st.selectbox(
-        "Scripted round",
-        options=[item["round_number"] for item in demo["rounds"]],
-    )
-    round_data = next(item for item in demo["rounds"] if item["round_number"] == round_number)
-    st.caption("Reference only — these are expected results, not recorded agent actions.")
-    for step_number, step in enumerate(round_data["expected_steps"], start=1):
-        st.write(f"{step_number}. {step}")
 
 with commands_tab:
     command_ids = st.session_state.get("command_ids", [])

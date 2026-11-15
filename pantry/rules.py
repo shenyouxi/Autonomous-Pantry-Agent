@@ -83,7 +83,7 @@ ALLERGEN_GROUP_ALIASES: dict[str, str] = {
 }
 
 # Ingredients that are always assumed to be available and never count as gaps.
-STAPLES: frozenset[str] = frozenset({"salt", "water", "pepper", "ice", "cooking oil", "vegetable oil"})
+STAPLES: frozenset[str] = frozenset({"salt", "water", "pepper", "ice", "cooking oil", "vegetable oil", "vinegar", "white vinegar", "white wine vinegar"})
 
 # Alternative ingredient name -> English lowercase canonical pantry name.
 ALIASES: dict[str, str] = {

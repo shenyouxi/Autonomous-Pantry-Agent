@@ -46,6 +46,23 @@ The three days finish automatically in seconds, every run is `RECORDED` and ther
 
 This cached run has **no Resolver/Linkup step and no allergen gate**. Do not narrate them.
 
+## 3b. Linkup stage demo (optional, live)
+
+**Purpose**: the cached run has no gap, so it never calls Linkup. This standalone script shows the Resolver live: a missing ingredient → real Linkup search → LLM extraction → pantry check, with cited source links. It writes no runs, traces, events or inventory; it only adds its own `search_cache` entry.
+
+**When**: right after `reset_demo.py` (so the pantry is at Day 1 stock), in a fourth terminal, before or after the auto-run. Never run it while a rehearsal is half-way through a day.
+
+- **Terminal 4 (Linkup stage, optional)**
+  ```bash
+  python scripts/linkup_demo.py                                          # default: eggs, 2 pcs
+  python scripts/linkup_demo.py --item "heavy cream" --amount 200 --unit ml
+  ```
+  It needs network and takes from a few seconds to roughly fifteen seconds, because Linkup and the LLM are called live.
+
+**What to say**: the agent found a sourced substitute. If the substitute cannot be covered from the pantry, or the units cannot be converted (for example cups to grams), the system refuses to guess and a human must confirm.
+
+**If it fails**: if Linkup or the LLM is unavailable, the script exits non-zero instead of faking data. Skip this step and show the cited sources from the README screenshot instead.
+
 ## 4. Prewarm (only if the cache must be rebuilt)
 
 1. Stop the worker and the UI.

@@ -66,8 +66,13 @@ class Worker:
                 if created:
                     run = self.orchestrator.execute(event)
 
+                    run = self.store.get_run(run.run_id) or run
                     trace = self.store.get_trace_by_run(run.run_id)
-                    if trace is not None and trace.risk_status == "none":
+                    if (
+                        trace is not None
+                        and trace.risk_status == "none"
+                        and not self._has_unresolved_gaps(run)
+                    ):
                         self._approve(
                             Command(
                                 command_id=f"auto-approve:{run.run_id}",
@@ -107,6 +112,29 @@ class Worker:
         if not run_id:
             raise ValueError("command payload requires run_id")
         return str(run_id)
+
+    @staticmethod
+    def _has_unresolved_gaps(run: Run) -> bool:
+        gaps = (run.checkpoints.get("GAP_CHECKED") or {}).get("gaps", [])
+        resolved = (run.checkpoints.get("RESOLVING") or {}).get("resolved", [])
+
+        resolved_names = {
+            str(row.get("gap", {}).get("name", "")).strip().lower()
+            for row in resolved
+            if row.get("substitute", {}).get("components")
+        }
+
+        for gap in gaps:
+            kind = gap.get("kind")
+            name = str(gap.get("name", "")).strip().lower()
+
+            if kind == "INSUFFICIENT":
+                return True
+
+            if kind == "MISSING" and name not in resolved_names:
+                return True
+
+        return False
 
     def _trace_id(self, run_id: str) -> str:
         return trace_id_for_run(run_id)
@@ -424,6 +452,7 @@ def build_worker(settings=None):
         store,
         llm,
         search_client=search_client,
+        cache_first=settings.cache_first,
     )
     worker = Worker(store, orchestrator)
     worker.autorun = AutoRunner(store, worker)

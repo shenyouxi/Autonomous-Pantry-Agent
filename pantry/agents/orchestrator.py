@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+import inspect
 from datetime import date
 from uuid import uuid4
 from pantry.agents.resolver import Resolver
@@ -46,17 +47,19 @@ class OneRunOrchestrator:
         sentinel: Sentinel | None = None,
         resolver: Resolver | None = None,
         search_client=None,
+        cache_first: bool | None = None,
         day_index: int = 0,
     ) -> None:
         self.store = store
         self.llm = llm
-        self.planner = planner or Planner(llm)
+        self.planner = planner or Planner(llm, store, cache_first=cache_first)
         self.sentinel = sentinel or Sentinel()
         if resolver is None:
             self.resolver = Resolver(
                 store,
                 search_client or FakeLinkupClient(),
                 extractor=self._extract_resolver_output,
+                cache_first=cache_first,
             )
         else:
             self.resolver = resolver
@@ -149,7 +152,18 @@ class OneRunOrchestrator:
                 step.degrade("vector search degraded to local fallback")
 
         with trace_step(self.store, run_id, "Planner") as step:
-            plan = self.planner.plan(snapshot_text, [item.trace_id for item in retrieved])
+            planner_args = (
+                snapshot_text,
+                [item.trace_id for item in retrieved],
+            )
+            planner_kwargs = {
+                "constraints": [str(event.constraints.model_dump())],
+                "allergens": allergens,
+            }
+            if "constraints" in inspect.signature(self.planner.plan).parameters:
+                plan = self.planner.plan(*planner_args, **planner_kwargs)
+            else:
+                plan = self.planner.plan(*planner_args)
             step.set(dish_name=plan.dish_name, servings=plan.servings)
             step.checkpoint(
                 "PLANNED",

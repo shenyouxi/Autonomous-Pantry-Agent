@@ -140,6 +140,13 @@ class Worker:
                 for component in components:
                     component_name = str(component["name"])
                     item = self.store.get_item(component_name)
+                    if item is None and rules.is_staple(component_name):
+                        logger.warning(
+                            "run %s: not reserving substitute %r for %r, "
+                            "staple not tracked in pantry",
+                            run.run_id, component_name, name,
+                        )
+                        continue
                     if item is None:
                         raise ValueError(
                             f"Cannot approve run {run.run_id}: "

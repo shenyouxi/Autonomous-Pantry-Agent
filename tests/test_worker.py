@@ -363,3 +363,54 @@ def test_process_commands_survives_failing_command():
     assert [c.status for c in processed] == ["failed"]
     assert "Unknown run" in processed[0].error
     assert worker.process_commands() == []
+
+
+def _run_with_substitute(store, component_name):
+    """A GATED-like run whose only gap (lemon juice) is resolved by one component."""
+    from pantry.models import Run
+
+    plan = {
+        "dish_name": "Milk dish",
+        "servings": 1,
+        "est_minutes": 10,
+        "ingredients": [
+            {"name": "milk", "amount": 1, "unit": "ml"},
+            {"name": "lemon juice", "amount": 1, "unit": "tsp"},
+        ],
+        "steps": ["Prepare milk"],
+    }
+    gap = {"name": "lemon juice", "needed": 1.0, "unit": "tsp", "kind": "MISSING"}
+    substitute = {
+        "substitute_name": component_name,
+        "components": [{"name": component_name, "amount": 1.0, "unit": "tsp"}],
+    }
+    return Run(
+        run_id="run:substitute-test",
+        trigger="STOCK_DEPLETED",
+        item_name="milk",
+        state="GATED",
+        idempotency_key="test:substitute",
+        checkpoints={
+            "PLANNED": {"plan": plan},
+            "RESOLVING": {"resolved": [{"gap": gap, "substitute": substitute}]},
+        },
+    )
+
+
+def test_reservation_skips_missing_staple_substitute_component():
+    store = JsonStore.memory()
+    store.seed_pantry([Ingredient(item_name="milk", quantity=1, unit="ml")])
+    worker = Worker(store, OneRunOrchestrator(store, FakeLLM()))
+
+    events = worker._reservation_events(_run_with_substitute(store, "water"))
+
+    assert [(e.item_name, e.delta) for e in events] == [("milk", 1.0)]
+
+
+def test_reservation_raises_for_missing_non_staple_substitute_component():
+    store = JsonStore.memory()
+    store.seed_pantry([Ingredient(item_name="milk", quantity=1, unit="ml")])
+    worker = Worker(store, OneRunOrchestrator(store, FakeLLM()))
+
+    with pytest.raises(ValueError, match="missing substitute item 'saffron'"):
+        worker._reservation_events(_run_with_substitute(store, "saffron"))
